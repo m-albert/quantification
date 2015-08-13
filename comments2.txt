@@ -1,0 +1,43 @@
+- segmentation channel wants to do all timepoints, not only validTimes
+
+calculating signal of basedata reggcamp with filterSize 5, time 000006
+debug:  6 0 11
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000006.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000007
+debug:  7 1 12
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000007.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000008
+debug:  8 2 13
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000008.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000009
+debug:  9 3 14
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000009.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000010
+debug:  10 4 15
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000010.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000011
+debug:  11 5 16
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000011.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000012
+debug:  12 6 17
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000012.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000013
+debug:  13 7 18
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000013.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000014
+debug:  14 8 19
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000014.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000015
+debug:  15 9 20
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000015.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000016
+debug:  16 10 21
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000016.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000017
+debug:  17 11 22
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000017.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000018
+debug:  18 12 23
+instanciating stack for file /data/malbert/quantification/20150317_45dpf_pu1_gcamp6s_right_15s_Subset.czi/raw_ch0/f000018.h5
+calculating signal of basedata reggcamp with filterSize 5, time 000019
+debug:  19 13 24

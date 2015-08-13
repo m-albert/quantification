@@ -1,0 +1,2 @@
+TODO:
+- init brain method to get dataset properties like dimt,spacing
