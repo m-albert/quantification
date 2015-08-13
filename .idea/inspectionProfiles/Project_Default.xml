@@ -12,6 +12,7 @@
           <option value="zeissFusion" />
           <option value="czifile" />
           <option value="filing" />
+          <option value="SimpleITK" />
         </list>
       </option>
     </inspection_tool>

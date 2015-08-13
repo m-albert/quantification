@@ -30,8 +30,11 @@ elastixPath = '/home/malbert/bin/elastix'
 
 config = dict()
 
+import SimpleITK as sitk
+
 import h5py
 import numpy as n
+from scipy import ndimage
 
 import misc
 import brain

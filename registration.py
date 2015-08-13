@@ -9,7 +9,7 @@ class RegistrationParameters(descriptors.ChannelData):
 
     nickname = 'registrationParams'
 
-    def __init__(self,parent,baseData,nickname,*args,**kargs):
+    def __init__(self,parent,baseData,nickname,reference=None,initialRegistration=None,*args,**kargs):
         print 'creating registration channel'
 
         self.baseData = baseData
@@ -18,6 +18,9 @@ class RegistrationParameters(descriptors.ChannelData):
         self.fileNameFormat = self.baseData.fileNameFormat
 
         self.validTimes = range(parent.dimt)
+
+        self.reference = reference
+        self.initialParams = initialRegistration
 
         super(RegistrationParameters,self).__init__(parent,nickname,*args,**kargs)
 
@@ -60,14 +63,35 @@ class RegistrationParameters(descriptors.ChannelData):
         for itime,time in enumerate(toDoTimes):
             print "registering basedata %s time %06d" %(self.baseData.nickname,time)
 
-            tmpImage = sitk.gifa(self.baseData[time])
+            # process initial params
+            if self.initialRegistration is None:
+                initialParams = None
+            elif type(self.initialRegistration) == type(RegistrationParameters):
+                initialParams = n.array(self.initialRegistration[time])
+            elif len(self.initialRegistration) != 12 and len(self.initialRegistration[times[0]]) == 12:
+                initialParams = self.initialRegistration[time]
+            elif len(self.initialRegistration) == 12:
+                initialParams = self.initialRegistration
+            else:
+                raise(Exception('check initialRegistration argument: %s' %self.initialRegistration))
+
+            # process reference image
+            if self.reference is None:
+                tmpImage = sitk.gifa(self.baseData[time])
+            elif type(self.reference) == sitk.Image:
+                tmpImage = self.reference
+            elif type(self.reference) == n.array:
+                tmpImage = sitk.gifa(self.reference)
+            else:
+                raise(Exception('check reference image argument'))
+
             if not (self.parent.registrationSliceStringSitk is None):
                 exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
 
             inputList = [outFileRef,tmpImage]
 
             tmpParams = imaging.getParamsFromElastix(inputList,
-                              initialParams=None,
+                              initialParams=initialParams,
                               tmpDir=tmpDir,
                               mode='similarity',
                               masks=None)
@@ -152,7 +176,7 @@ class Transformation(descriptors.ChannelData):
             changedParams[:] = tmpParams
             if not (self.offset is None):
                 changedParams[9:] += self.offset
-            tmpRes = beads.transformStackAndRef(changedParams,tmpIm,refIm)
+            tmpRes = transformStackAndRef(changedParams,tmpIm,refIm)
 
             if not (self.mask is None):
                 tmpRes = tmpRes*mask
@@ -167,5 +191,41 @@ class Transformation(descriptors.ChannelData):
                                     hierarchy=config['registeredPath'])
 
         return outDict
+
+def transformStackAndRef(p,stack,refStack):
+    # can handle composite transformations (len(p)%12)
+    newim = transformStack(p,stack)
+    if not (refStack is None):
+        newim = sitk.Resample(newim,refStack)
+    return newim
+
+def transformStack(p,stack,outShape=None,outSpacing=None,outOrigin=None):
+    # can handle composite transformations (len(p)%12)
+    # 20140326: added outOrigin option
+    numpyarray = False
+    if type(stack)==n.ndarray:
+        numpyarray = True
+        stack = sitk.GetImageFromArray(stack)
+    transf = sitk.Transform(3,8)
+    if not (p is None):
+        for i in range(len(p)/12):
+            transf.AddTransform(sitk.Transform(3,6))
+        #p = n.array(p)
+        #p = n.concatenate([p[:9].reshape((3,3))[::-1,::-1].flatten(),p[9:][::-1]])
+        transf.SetParameters(n.array(p,dtype=n.float64))
+    if outShape is None: shape = stack.GetSize()
+    else:
+        shape = n.ceil(n.array(outShape))
+        shape = [int(i) for i in shape]
+    if outSpacing is None: outSpacing = stack.GetSpacing()
+    else: outSpacing = n.array(outSpacing)
+    if outOrigin is None: outOrigin = stack.GetOrigin()
+    else: outOrigin = n.array(outOrigin)
+    print stack.GetSize(),shape
+    #pdb.set_trace()
+    newim = sitk.Resample(stack,shape,transf,sitk.sitkLinear,outOrigin,outSpacing)
+    if numpyarray:
+        newim = sitk.GetArrayFromImage(newim)
+    return newim
 
 
