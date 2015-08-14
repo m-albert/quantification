@@ -31,6 +31,8 @@ elastixPath = '/home/malbert/bin/elastix'
 config = dict()
 
 import SimpleITK as sitk
+sitk.gifa = sitk.GetImageFromArray
+sitk.gafi = sitk.GetArrayFromImage
 
 import h5py
 import numpy as n

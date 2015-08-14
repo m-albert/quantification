@@ -305,8 +305,11 @@ class RawChannel(ChannelData):
 
         for itime,time in enumerate(toDoTimes):
             print "preparing channel %01d time %06d" %(self.channel,time)
+            if not os.path.exists(self.parent.fileName):
+                raise(Exception('file doesnt exist: %s' %self.parent.fileName))
             if self.parent.fileName[-4:] == '.czi':
                 if os.path.exists(self.parent.fileName[:-4]+'(1).czi'): masterFile = True
+                else: masterFile = False
                 if masterFile:
                     if not time: tmpFileName = self.parent.fileName
                     else: tmpFileName = self.parent.fileName[:-4]+'(%s).czi' %time

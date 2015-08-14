@@ -1,7 +1,7 @@
 __author__ = 'malbert'
 
 import sys
-sys.path.append('..')
+sys.path = [sys.path[0]]+['..']+sys.path[1:]
 from dependencies import *
 
 b = brain.Brain('/data/malbert/data/dbspim/20141214_gcamp_pu1_ot_30sec_Subset.czi',

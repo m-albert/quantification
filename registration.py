@@ -2,14 +2,19 @@ __author__ = 'malbert'
 
 from dependencies import *
 
-config['registrationPath'] = 'registrationParameters'
-config['registeredPath'] = 'registered'
+# config['registrationPath'] = 'registrationParameters'
+# config['registeredPath'] = 'registered'
 
 class RegistrationParameters(descriptors.ChannelData):
 
     nickname = 'registrationParams'
 
-    def __init__(self,parent,baseData,nickname,reference=None,initialRegistration=None,*args,**kargs):
+    def __init__(self,parent,baseData,nickname,
+                 reference=None,
+                 initialRegistration=None,
+                 singleRegistrationTime=None,
+                 *args,**kargs):
+
         print 'creating registration channel'
 
         self.baseData = baseData
@@ -20,7 +25,8 @@ class RegistrationParameters(descriptors.ChannelData):
         self.validTimes = range(parent.dimt)
 
         self.reference = reference
-        self.initialParams = initialRegistration
+        self.initialRegistration = initialRegistration
+        self.singleRegistrationTime = singleRegistrationTime
 
         super(RegistrationParameters,self).__init__(parent,nickname,*args,**kargs)
 
@@ -34,14 +40,13 @@ class RegistrationParameters(descriptors.ChannelData):
         alreadyDoneTimes, toDoTimes = [],[]
         for itime,time in enumerate(times):
             tmpFile = h5py.File(self.baseData.getFileName(time))
-            # if config['registrationPath'] in self.baseData[time].file.keys():
-            if config['registrationPath'] in tmpFile.keys():
+            if self.nickname in tmpFile.keys():
                 if redo:
-                    del tmpFile[config['registrationPath']]
+                    del tmpFile[self.nickname]
                     toDoTimes.append(time)
                 else:
                     alreadyDoneTimes.append(time)
-                    outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=config['registrationPath'])
+                    outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.nickname)
             else:
                 toDoTimes.append(time)
             tmpFile.close()
@@ -61,7 +66,6 @@ class RegistrationParameters(descriptors.ChannelData):
         sitk.WriteImage(tmpImage,outFileRef)
 
         for itime,time in enumerate(toDoTimes):
-            print "registering basedata %s time %06d" %(self.baseData.nickname,time)
 
             # process initial params
             if self.initialRegistration is None:
@@ -75,35 +79,50 @@ class RegistrationParameters(descriptors.ChannelData):
             else:
                 raise(Exception('check initialRegistration argument: %s' %self.initialRegistration))
 
-            # process reference image
-            if self.reference is None:
-                tmpImage = sitk.gifa(self.baseData[time])
-            elif type(self.reference) == sitk.Image:
-                tmpImage = self.reference
-            elif type(self.reference) == n.array:
-                tmpImage = sitk.gifa(self.reference)
+            if self.singleRegistrationTime is None or time == self.singleRegistrationTime:
+
+                print "registering basedata %s time %06d" %(self.baseData.nickname,time)
+
+                # process reference image
+                if self.reference is None:
+                    tmpImage = sitk.gifa(self.baseData[time])
+                elif type(self.reference) == sitk.Image:
+                    tmpImage = self.reference
+                elif type(self.reference) == n.array:
+                    tmpImage = sitk.gifa(self.reference)
+                elif type(self.reference) == str:
+                    tmpImage = sitk.ReadImage(self.reference)
+                else:
+                    raise(Exception('check reference image argument'))
+
+                if not (self.parent.registrationSliceStringSitk is None):
+                    exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
+
+                inputList = [outFileRef,tmpImage]
+
+                tmpParams = imaging.getParamsFromElastix(inputList,
+                                  initialParams=initialParams,
+                                  tmpDir=tmpDir,
+                                  mode='similarity',
+                                  masks=None)
+
+                tmpParams = n.array(tmpParams[1]).astype(n.float64)
+
             else:
-                raise(Exception('check reference image argument'))
+                if self.singleRegistrationTime != 0: raise(Exception('the two references need to be the same!'))
+                relParams = self.timesDict[str(time)]
+                if initialParams is None:
+                    tmpParams = relParams
+                else:
+                    tmpParams = composeAffineTransformations([initialParams,relParams])
 
-            if not (self.parent.registrationSliceStringSitk is None):
-                exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
-
-            inputList = [outFileRef,tmpImage]
-
-            tmpParams = imaging.getParamsFromElastix(inputList,
-                              initialParams=initialParams,
-                              tmpDir=tmpDir,
-                              mode='similarity',
-                              masks=None)
-
-            tmpParams = n.array(tmpParams[1]).astype(n.float64)
 
             tmpFile = h5py.File(self.baseData[time].file.filename)
-            tmpFile[config['registrationPath']] = tmpParams
+            tmpFile[self.nickname] = tmpParams
             tmpFile.close()
 
             outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
-                                    hierarchy=config['registrationPath'])
+                                    hierarchy=config[self.nickname])
 
             self.baseData.close(time)
 
@@ -114,7 +133,7 @@ class RegistrationParameters(descriptors.ChannelData):
 
 class Transformation(descriptors.ChannelData):
 
-    def __init__(self,parent,baseData,paramsData,nickname,mask=None,filterTimes=True,offset=None,*args,**kargs):
+    def __init__(self,parent,baseData,paramsData,nickname,mask=None,filterTimes=None,offset=None,*args,**kargs):
         print 'creating transformation channel of %s using %s and mask %s' %(baseData.nickname,paramsData.nickname,mask)
 
         self.baseData = baseData
@@ -129,8 +148,9 @@ class Transformation(descriptors.ChannelData):
             midLine = ndimage.filters.percentile_filter(s,50,20,mode='constant')
             diffs = s-midLine
             goodIndices = n.where(n.array(n.abs(diffs)<3*n.std(diffs[n.where(n.abs(diffs)<n.std(diffs))])))[0]
-
-        self.validTimes = goodIndices
+            self.validTimes = goodIndices
+        else:
+            self.validTimes = parent.times
 
         self.dir = self.baseData.dir
         self.fileNameFormat = self.baseData.fileNameFormat
@@ -147,13 +167,13 @@ class Transformation(descriptors.ChannelData):
         alreadyDoneTimes, toDoTimes = [],[]
         for itime,time in enumerate(times):
             tmpFile = h5py.File(self.baseData.getFileName(time))
-            if config['registeredPath'] in tmpFile.keys():
+            if self.nickname in tmpFile.keys():
                 if redo:
-                    del tmpFile[config['registeredPath']]
+                    del tmpFile[self.nickname]
                     toDoTimes.append(time)
                 else:
                     alreadyDoneTimes.append(time)
-                    outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=config['registeredPath'])
+                    outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.nickname)
             else:
                 toDoTimes.append(time)
             #tmpGroup.file.close()
@@ -184,11 +204,11 @@ class Transformation(descriptors.ChannelData):
             tmpRes = sitk.gafi(tmpRes)
 
             tmpFile = h5py.File(self.baseData[time].file.filename)
-            tmpFile[config['registeredPath']] = tmpRes
+            tmpFile[self.nickname] = tmpRes
             tmpFile.close()
 
             outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
-                                    hierarchy=config['registeredPath'])
+                                    hierarchy=self.nickname)
 
         return outDict
 
@@ -228,4 +248,14 @@ def transformStack(p,stack,outShape=None,outSpacing=None,outOrigin=None):
         newim = sitk.GetArrayFromImage(newim)
     return newim
 
-
+def composeAffineTransformations(paramsList):
+    """
+    compose parameters from subsequent affine transformations given in list paramsList
+    """
+    currentParams = n.array([1,0,0,0,1,0,0,0,1,0,0,0])
+    for params in paramsList:
+        params = n.array(params)
+        tmpMatrix = n.dot(currentParams[:9].reshape((3,3)),params[:9].reshape((3,3)))
+        tmpTrans = n.dot(currentParams[:9].reshape((3,3)),params[9:])+currentParams[9:]
+        currentParams = n.concatenate([tmpMatrix.flatten(),tmpTrans],0)
+    return currentParams
