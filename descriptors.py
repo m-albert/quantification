@@ -27,6 +27,7 @@ class H5Array(object):
         self.hierarchy = hierarchy
         self.file = None
         self.dataset = None
+        return
 
     def __get__(self,instance,owner):
         # open file only if needed

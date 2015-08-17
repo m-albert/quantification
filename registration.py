@@ -10,7 +10,7 @@ class RegistrationParameters(descriptors.ChannelData):
     nickname = 'registrationParams'
 
     def __init__(self,parent,baseData,nickname,
-                 reference=None,
+                 reference=0,
                  initialRegistration=None,
                  singleRegistrationTime=None,
                  *args,**kargs):
@@ -57,13 +57,26 @@ class RegistrationParameters(descriptors.ChannelData):
 
         if not len(toDoTimes): return outDict
 
-        tmpImage = sitk.gifa(self.baseData[0])
+        # process reference image
+        if type(self.reference) == int:
+            tmpImage = sitk.gifa(self.baseData[self.parent.times[self.reference]])
+        elif type(self.reference) == sitk.Image:
+            tmpImage = self.reference
+        elif type(self.reference) == n.array:
+            tmpImage = sitk.gifa(self.reference)
+        elif type(self.reference) == str:
+            tmpImage = sitk.ReadImage(self.reference)
+        else:
+            raise(Exception('check reference image argument'))
+        # tmpImage = sitk.gifa(self.baseData[0])
         if not (self.parent.registrationSliceStringSitk is None):
             exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
 
         outFileRef = os.path.join(tmpDir,'refImage.mhd')
         outFileRefRaw = os.path.join(tmpDir,'refImage.raw')
         sitk.WriteImage(tmpImage,outFileRef)
+
+        # pdb.set_trace()
 
         for itime,time in enumerate(toDoTimes):
 
@@ -79,29 +92,26 @@ class RegistrationParameters(descriptors.ChannelData):
             else:
                 raise(Exception('check initialRegistration argument: %s' %self.initialRegistration))
 
-            if self.singleRegistrationTime is None or time == self.singleRegistrationTime:
+            if type(self.reference) == int and time == self.reference:
+                relParams = n.array([1.,0,0,0,1,0,0,0,1,0,0,0])
+                if initialParams is None:
+                    tmpParams = relParams
+                else:
+                    tmpParams = composeAffineTransformations([initialParams,relParams])
+
+            elif self.singleRegistrationTime is None or self.singleRegistrationTime == time:
 
                 print "registering basedata %s time %06d" %(self.baseData.nickname,time)
-
-                # process reference image
-                if self.reference is None:
-                    tmpImage = sitk.gifa(self.baseData[time])
-                elif type(self.reference) == sitk.Image:
-                    tmpImage = self.reference
-                elif type(self.reference) == n.array:
-                    tmpImage = sitk.gifa(self.reference)
-                elif type(self.reference) == str:
-                    tmpImage = sitk.ReadImage(self.reference)
-                else:
-                    raise(Exception('check reference image argument'))
 
                 if not (self.parent.registrationSliceStringSitk is None):
                     exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
 
                 inputList = [outFileRef,tmpImage]
 
+                if initialParams is None: tmpInitialParams = None
+                else: tmpInitialParams = [[1.,0,0,0,1,0,0,0,1,0,0,0],initialParams]
                 tmpParams = imaging.getParamsFromElastix(inputList,
-                                  initialParams=initialParams,
+                                  initialParams=tmpInitialParams,
                                   tmpDir=tmpDir,
                                   mode='similarity',
                                   masks=None)
@@ -109,20 +119,21 @@ class RegistrationParameters(descriptors.ChannelData):
                 tmpParams = n.array(tmpParams[1]).astype(n.float64)
 
             else:
-                if self.singleRegistrationTime != 0: raise(Exception('the two references need to be the same!'))
-                relParams = self.timesDict[str(time)]
+                if type(self.initialRegistration.reference) == int and self.singleRegistrationTime != self.initialRegistration.reference:
+                    raise(Exception('the two references need to be the same!'))
+
+                tmpObject = outDict[self.singleRegistrationTime]
+                relParams = tmpObject.__get__(tmpObject,tmpObject)
                 if initialParams is None:
                     tmpParams = relParams
                 else:
                     tmpParams = composeAffineTransformations([initialParams,relParams])
 
-
             tmpFile = h5py.File(self.baseData[time].file.filename)
             tmpFile[self.nickname] = tmpParams
             tmpFile.close()
 
-            outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
-                                    hierarchy=config[self.nickname])
+            outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),hierarchy=self.nickname)
 
             self.baseData.close(time)
 
