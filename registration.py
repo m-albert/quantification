@@ -118,6 +118,8 @@ class RegistrationParameters(descriptors.ChannelData):
 
                 tmpParams = n.array(tmpParams[1]).astype(n.float64)
 
+                self.relParams = tmpParams
+
             else:
                 if type(self.initialRegistration.reference) == int and self.singleRegistrationTime != self.initialRegistration.reference:
                     raise(Exception('the two references need to be the same!'))
