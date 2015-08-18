@@ -11,6 +11,7 @@ sys.path.append('/home/malbert/software/fusion/zeiss/experimental')
 sys.path.append('/home/malbert/software/fusion/dependencies_linux/SimpleITKcurrent')
 
 import ilastiking,filing,imaging
+import transformations
 import tifffile
 import trackpy
 import pandas

@@ -13,6 +13,7 @@
           <option value="czifile" />
           <option value="filing" />
           <option value="SimpleITK" />
+          <option value="transformations" />
         </list>
       </option>
     </inspection_tool>
