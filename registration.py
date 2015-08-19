@@ -10,9 +10,10 @@ class RegistrationParameters(descriptors.ChannelData):
     nickname = 'registrationParams'
 
     def __init__(self,parent,baseData,nickname,
-                 reference=0,
+
+                 mode = 'intra',
+                 reference = 0,
                  initialRegistration=None,
-                 singleRegistrationTime=None,
                  *args,**kargs):
 
         print 'creating registration channel with nickname %s' %nickname
@@ -26,8 +27,7 @@ class RegistrationParameters(descriptors.ChannelData):
 
         self.reference = reference
         self.initialRegistration = initialRegistration
-        self.singleRegistrationTime = singleRegistrationTime
-
+        self.mode = mode
         super(RegistrationParameters,self).__init__(parent,nickname,*args,**kargs)
 
         self.timepointClass = descriptors.H5Array
@@ -47,7 +47,8 @@ class RegistrationParameters(descriptors.ChannelData):
                 else:
                     alreadyDoneTimes.append(time)
                     outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.nickname)
-                    if self.singleRegistrationTime is None or self.singleRegistrationTime == time:
+                    if self.mode == 'inter' and not time:
+                    # if self.singleRegistrationTime is None or self.singleRegistrationTime == time:
                         self.relParams = outDict[time].__get__(outDict[time],outDict[time])
             else:
                 toDoTimes.append(time)
@@ -71,6 +72,9 @@ class RegistrationParameters(descriptors.ChannelData):
         else:
             raise(Exception('check reference image argument'))
 
+        if not (self.parent.registrationSliceStringSitk is None):
+            exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
+
         outFileRef = os.path.join(tmpDir,'refImage.mhd')
         outFileRefRaw = os.path.join(tmpDir,'refImage.raw')
         sitk.WriteImage(tmpImage,outFileRef)
@@ -91,49 +95,52 @@ class RegistrationParameters(descriptors.ChannelData):
             else:
                 raise(Exception('check initialRegistration argument: %s' %self.initialRegistration))
 
-            if type(self.reference) == int and time == self.reference:
-                relParams = n.array([1.,0,0,0,1,0,0,0,1,0,0,0])
-                if initialParams is None:
-                    tmpParams = relParams
+            if self.mode == 'intra':
+                if time == self.reference:
+                    tmpParams = n.array([1.,0,0,0,1,0,0,0,1,0,0,0])
                 else:
-                    tmpParams = composeAffineTransformations([initialParams,relParams])
-                    # tmpParams = composeAffineTransformations([relParams,initialParams])
+                    tmpImage = sitk.gifa(self.baseData[time])
+                    if not (self.parent.registrationSliceStringSitk is None):
+                        exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
 
-            elif self.singleRegistrationTime is None or self.singleRegistrationTime == time:
+                    closestTime = alreadyDoneTimes[n.argmin(n.abs(n.array(alreadyDoneTimes)-time))]
+                    tmpObject = outDict[closestTime]
+                    tmpInitialParams = [[1.,0,0,0,1,0,0,0,1,0,0,0],tmpObject.__get__(tmpObject,tmpObject)]
+                    print 'taking tp %s as initial (intra) parameters for tp %s' %(closestTime,time)
 
-                print "registering basedata %s time %06d" %(self.baseData.nickname,time)
+                    inputList = [outFileRef,tmpImage]
+                    mode = 'rigid'
+                    tmpParams = getParamsFromElastix(inputList,
+                                      initialParams=tmpInitialParams,
+                                      tmpDir=tmpDir,
+                                      mode=mode,
+                                      masks=None)
+                    tmpParams = n.array(tmpParams[1]).astype(n.float64)
 
-                tmpImage = sitk.gifa(self.baseData[time])
-                if not (self.parent.registrationSliceStringSitk is None):
-                    exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
+            elif self.mode == 'inter':
+                if not time:
 
-                inputList = [outFileRef,tmpImage]
+                    tmpImage = sitk.gifa(self.baseData[time])
+                    if not (self.parent.registrationSliceStringSitk is None):
+                        exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
 
-                if initialParams is None: tmpInitialParams = None
-                else: tmpInitialParams = [[1.,0,0,0,1,0,0,0,1,0,0,0],initialParams]
-                if self.singleRegistrationTime is None: mode = 'rigid'
-                else: mode = 'similarity'
-                tmpParams = getParamsFromElastix(inputList,
-                                  initialParams=tmpInitialParams,
-                                  tmpDir=tmpDir,
-                                  mode=mode,
-                                  masks=None)
+                    if initialParams is None: tmpInitialParams = None
+                    else: tmpInitialParams = [[1.,0,0,0,1,0,0,0,1,0,0,0],initialParams]
 
-                tmpParams = n.array(tmpParams[1]).astype(n.float64)
-
-                self.relParams = tmpParams
-
-            else:
-                if type(self.initialRegistration.reference) == int and self.singleRegistrationTime != self.initialRegistration.reference:
-                    raise(Exception('the two references need to be the same!'))
-
-                tmpObject = outDict[self.singleRegistrationTime]
-                relParams = tmpObject.__get__(tmpObject,tmpObject)
-                if initialParams is None:
-                    tmpParams = relParams
+                    inputList = [outFileRef,tmpImage]
+                    mode = 'similarity'
+                    tmpParams = getParamsFromElastix(inputList,
+                                      initialParams=tmpInitialParams,
+                                      tmpDir=tmpDir,
+                                      mode=mode,
+                                      masks=None)
+                    tmpParams = n.array(tmpParams[1]).astype(n.float64)
+                    self.relParams = tmpParams
                 else:
-                    tmpParams = composeAffineTransformations([initialParams,relParams])
-                    # tmpParams = composeAffineTransformations([relParams,initialParams])
+                    if initialParams is None:
+                        tmpParams = self.relParams
+                    else:
+                        tmpParams = composeAffineTransformations([initialParams,self.relParams])
 
 
             tmpFile = h5py.File(self.baseData[time].file.filename)
@@ -141,6 +148,7 @@ class RegistrationParameters(descriptors.ChannelData):
             tmpFile.close()
 
             outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),hierarchy=self.nickname)
+            alreadyDoneTimes.append(time)
 
             self.baseData.close(time)
 
@@ -307,6 +315,9 @@ def getParamsFromElastix(images,initialParams=None,
     """
     os.environ['LD_LIBRARY_PATH'] = os.path.join(os.path.dirname(os.path.dirname(elastixPath)),'lib')
 
+    wroteFixed = False
+    wroteMoving = False
+
     if initialParams is None:
         params = [[1.,0,0,0,1,0,0,0,1,0,0,0]]*len(images)
     else:
@@ -316,6 +327,7 @@ def getParamsFromElastix(images,initialParams=None,
 
         fiPath = os.path.join(tmpDir,'tmpFixedImage.mhd')
         sitk.WriteImage(images[0],fiPath)
+        wroteFixed = True
 
     elif type(images[0]) == str:
         fiPath = images[0]
@@ -331,6 +343,7 @@ def getParamsFromElastix(images,initialParams=None,
 
             sitk.WriteImage(images[iim],os.path.join(tmpDir,'tmpMovingImage.mhd'))
             miPath = os.path.join(tmpDir,'tmpMovingImage.mhd')
+            wroteMoving = True
 
         elif type(images[iim]) == str:
             miPath = images[iim]
@@ -409,6 +422,13 @@ def getParamsFromElastix(images,initialParams=None,
         finalParams.append(lastParams)
 
         # if masks is not None: os.remove(miMaskPath)
+    if wroteFixed:
+        os.remove(fiPath)
+        os.remove(fiPath[:-3]+'raw')
+    if wroteMoving:
+        os.remove(miPath)
+        os.remove(miPath[:-3]+'raw')
+
     finalParams = n.array(finalParams)
     return finalParams
 
@@ -488,7 +508,7 @@ elastixParameterTemplateString = """
 (WriteResultImage "false")
 (CompressResultImage "false")
 //(WriteResultImageAfterEachResolution "true")
-(ShowExactMetricValue "true")
+(ShowExactMetricValue "false")
 
 //Maximum number of iterations in each resolution level:
 //(MaximumNumberOfIterations 500)
@@ -538,7 +558,9 @@ elastixParameterTemplateStringRotation = """
 (NumberOfResolutions 3)
 
 //(ImagePyramidSchedule  8 8 2  4 4 1  2 2 1 )
-(ImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
+//(ImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
+(FixedImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
+(MovingImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
 
 //ImageTypes
 (FixedInternalImagePixelType "short")
@@ -583,7 +605,7 @@ elastixParameterTemplateStringRotation = """
 (WriteResultImage "false")
 (CompressResultImage "false")
 //(WriteResultImageAfterEachResolution "true")
-(ShowExactMetricValue "true")
+(ShowExactMetricValue "false")
 
 //Maximum number of iterations in each resolution level:
 (MaximumNumberOfIterations 500 250 100)
@@ -600,7 +622,7 @@ elastixParameterTemplateStringRotation = """
 //(ImageSampler "RandomSparseMask")
 //(ImageSampler "Full")
 //(SampleGridSpacing 2)
-(NumberOfSpatialSamples 1024)
+(NumberOfSpatialSamples 2048)
 (NewSamplesEveryIteration "true")
 (CheckNumberOfSamples "true")
 //(MaximumNumberOfIterations 500 100)
@@ -649,9 +671,11 @@ elastixParameterTemplateStringSimilarity = """
 (Metric "AdvancedMattesMutualInformation")
 //(Metric "NormalizedMutualInformation")
 (Optimizer "AdaptiveStochasticGradientDescent")
+//(Optimizer "QuasiNewtonLBFGS")
 (ResampleInterpolator "FinalBSplineInterpolator")
 (Resampler "DefaultResampler")
 (Transform "SimilarityTransform")
+//(GradientMagnitudeTolerance 1e-6)
 
 
 // ********** Pyramid
@@ -660,7 +684,9 @@ elastixParameterTemplateStringSimilarity = """
 //(NumberOfResolutions 4)
 (NumberOfResolutions 3)
 //(ImagePyramidSchedule 16 16 4 8 8 2 4 4 1 2 2 1)
-(ImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
+(ImagePyramidSchedule 8 8 4 4 4 2 1 1 1)
+//(FixedImagePyramidSchedule 4 4 2 2 2 1 1 1 1)
+//(MovingImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
 
 
 // ********** Transform
@@ -674,12 +700,7 @@ elastixParameterTemplateStringSimilarity = """
 // ********** Optimizer
 
 // Maximum number of iterations in each resolution level:
-//(MaximumNumberOfIterations 300 200 100 50)
-
 (MaximumNumberOfIterations 1000 500 250)
-//(MaximumNumberOfIterations 600 400 200 100)
-
-//(MaximumNumberOfIterations 5000 2500 1000 500)
 
 (AutomaticParameterEstimation "true")
 (UseAdaptiveStepSizes "true")
@@ -711,15 +732,15 @@ elastixParameterTemplateStringSimilarity = """
 // ********** ImageSampler
 
 //Number of spatial samples used to compute the mutual information in each resolution level:
-//(ImageSampler "RandomCoordinate")
-//(CheckNumberOfSamples "false" "false" "false")
-//(NumberOfSpatialSamples 2048 4096 4096 4096)
+(ImageSampler "RandomCoordinate")
+(CheckNumberOfSamples "false" "false" "false")
+(NumberOfSpatialSamples 4096)
 //(NumberOfSamplesForSelfHessian 10000)
 //(NumberOfSamplesForExactGradient 10000)
-//(NewSamplesEveryIteration "true")
-//(UseRandomSampleRegion "false")
-//(MaximumNumberOfSamplingAttempts 0 0 0)
-(ImageSampler "Full")
+(NewSamplesEveryIteration "true")
+(UseRandomSampleRegion "false")
+(MaximumNumberOfSamplingAttempts 0)
+//(ImageSampler "Full")
 (RequiredRatioOfValidSamples 0.25)
 
 

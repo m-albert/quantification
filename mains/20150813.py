@@ -15,7 +15,7 @@ for isample,sample in enumerate(samples):
                     times=range(10)
                     )
     descriptors.RawChannel(b,0,'p2y12')
-    registration.RegistrationParameters(b,b.p2y12,'intrareg')
+    registration.RegistrationParameters(b,b.p2y12,'intrareg',mode='intra')
     registration.Transformation(b,b.p2y12,b.intrareg,'intraaligned')
     bs.append(b)
 #b.classifiers['pu1'] = '/data/malbert/quantification/20150502_45dpf_p2y12_fast_Subset.czi/classifier.ilp'
