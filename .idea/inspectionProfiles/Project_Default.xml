@@ -14,6 +14,8 @@
           <option value="filing" />
           <option value="SimpleITK" />
           <option value="transformations" />
+          <option value="registration.sitk" />
+          <option value="helpers2.sitk" />
         </list>
       </option>
     </inspection_tool>

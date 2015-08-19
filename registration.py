@@ -28,6 +28,9 @@ class RegistrationParameters(descriptors.ChannelData):
         self.reference = reference
         self.initialRegistration = initialRegistration
         self.mode = mode
+
+        self.relShape = None
+
         super(RegistrationParameters,self).__init__(parent,nickname,*args,**kargs)
 
         self.timepointClass = descriptors.H5Array
@@ -50,6 +53,13 @@ class RegistrationParameters(descriptors.ChannelData):
                     if self.mode == 'inter' and not time:
                     # if self.singleRegistrationTime is None or self.singleRegistrationTime == time:
                         self.relParams = outDict[time].__get__(outDict[time],outDict[time])
+                        if type(self.reference) == sitk.Image:
+                            self.relShape = n.array(self.reference.GetSize())
+                        elif type(self.reference) == n.array:
+                            self.relShape = n.array(self.reference.shape)[::-1]
+                    if self.mode == 'intra' and time == self.reference:
+                        self.relShape = n.array(self.baseData[self.reference].shape)[::-1]
+
             else:
                 toDoTimes.append(time)
             tmpFile.close()
@@ -99,6 +109,7 @@ class RegistrationParameters(descriptors.ChannelData):
                 if time == self.reference:
                     tmpParams = n.array([1.,0,0,0,1,0,0,0,1,0,0,0])
                 else:
+                    if self.relShape is None: self.relShape == self.baseData[0].shape[::-1]
                     tmpImage = sitk.gifa(self.baseData[time])
                     if not (self.parent.registrationSliceStringSitk is None):
                         exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
@@ -119,6 +130,7 @@ class RegistrationParameters(descriptors.ChannelData):
 
             elif self.mode == 'inter':
                 if not time:
+                    if self.relShape is None: self.relShape == n.array(tmpImage.GetSize())
 
                     tmpImage = sitk.gifa(self.baseData[time])
                     if not (self.parent.registrationSliceStringSitk is None):
@@ -228,6 +240,9 @@ class Transformation(descriptors.ChannelData):
             if not (self.mask is None):
                 tmpRes = tmpRes*mask
 
+            tmpRes = tmpRes[0:self.paramsData.relShape[0],0:self.paramsData.relShape[1],0:self.paramsData.relShape[2]]
+            tmpRes.SetSpacing((1,1,1.))
+            tmpRes.SetOrigin((0,0,0.))
             tmpRes = sitk.gafi(tmpRes)
 
             tmpFile = h5py.File(self.baseData[time].file.filename)
@@ -682,9 +697,9 @@ elastixParameterTemplateStringSimilarity = """
 
 // Total number of resolutions
 //(NumberOfResolutions 4)
-(NumberOfResolutions 3)
+(NumberOfResolutions 4)
 //(ImagePyramidSchedule 16 16 4 8 8 2 4 4 1 2 2 1)
-(ImagePyramidSchedule 8 8 4 4 4 2 1 1 1)
+(ImagePyramidSchedule 16 16 8 8 8 4 4 4 2 1 1 1)
 //(FixedImagePyramidSchedule 4 4 2 2 2 1 1 1 1)
 //(MovingImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
 
@@ -700,7 +715,7 @@ elastixParameterTemplateStringSimilarity = """
 // ********** Optimizer
 
 // Maximum number of iterations in each resolution level:
-(MaximumNumberOfIterations 1000 500 250)
+(MaximumNumberOfIterations 2000 1000 500 250)
 
 (AutomaticParameterEstimation "true")
 (UseAdaptiveStepSizes "true")
