@@ -16,6 +16,7 @@
           <option value="transformations" />
           <option value="registration.sitk" />
           <option value="helpers2.sitk" />
+          <option value="prediction.sitk" />
         </list>
       </option>
     </inspection_tool>

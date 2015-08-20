@@ -21,4 +21,4 @@ for isample,sample in enumerate(samples):
                     )
     descriptors.RawChannel(b,0,'p2y12')
     # sitk.WriteImage(sitk.gifa(b.p2y12[0]),'/data/malbert/atlas/references/45dpf_af_gfp/20150811/atlasData/atlas0_%03d.mhd' %(isample+1))
-    sitk.WriteImage(sitk.gifa(b.p2y12[0]),'/data/malbert/atlas/references/50dpf_af_gfp/20150812/atlasData/atlas0_%03d.mhd' %(isample+1))
+    sitk.WriteImage(sitk.gifa(b.p2y12[0]),'/data/malbert/atlas/references/65dpf_af_gfp/20150810/atlasData/atlas0_%03d.mhd' %(isample+1))

@@ -39,6 +39,13 @@ class RegistrationParameters(descriptors.ChannelData):
     def prepareTimepoints(self,times,redo):
 
         outDict = dict()
+        if self.mode == 'inter':
+            if type(self.reference) == sitk.Image:
+                self.relShape = n.array(self.reference.GetSize())
+            elif type(self.reference) == n.array:
+                self.relShape = n.array(self.reference.shape)[::-1]
+        elif self.mode == 'intra':
+            self.relShape = n.array(self.baseData[self.reference].shape)[::-1]
 
         alreadyDoneTimes, toDoTimes = [],[]
         for itime,time in enumerate(times):
@@ -53,13 +60,6 @@ class RegistrationParameters(descriptors.ChannelData):
                     if self.mode == 'inter' and not time:
                     # if self.singleRegistrationTime is None or self.singleRegistrationTime == time:
                         self.relParams = outDict[time].__get__(outDict[time],outDict[time])
-                        if type(self.reference) == sitk.Image:
-                            self.relShape = n.array(self.reference.GetSize())
-                        elif type(self.reference) == n.array:
-                            self.relShape = n.array(self.reference.shape)[::-1]
-                    if self.mode == 'intra' and time == self.reference:
-                        self.relShape = n.array(self.baseData[self.reference].shape)[::-1]
-
             else:
                 toDoTimes.append(time)
             tmpFile.close()
@@ -109,7 +109,7 @@ class RegistrationParameters(descriptors.ChannelData):
                 if time == self.reference:
                     tmpParams = n.array([1.,0,0,0,1,0,0,0,1,0,0,0])
                 else:
-                    if self.relShape is None: self.relShape == self.baseData[0].shape[::-1]
+                    # if self.relShape is None: self.relShape == self.baseData[0].shape[::-1]
                     tmpImage = sitk.gifa(self.baseData[time])
                     if not (self.parent.registrationSliceStringSitk is None):
                         exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
@@ -130,7 +130,7 @@ class RegistrationParameters(descriptors.ChannelData):
 
             elif self.mode == 'inter':
                 if not time:
-                    if self.relShape is None: self.relShape == n.array(tmpImage.GetSize())
+                    # if self.relShape is None: self.relShape == n.array(tmpImage.GetSize())
 
                     tmpImage = sitk.gifa(self.baseData[time])
                     if not (self.parent.registrationSliceStringSitk is None):
@@ -475,10 +475,11 @@ elastixParameterTemplateString = """
 
 (Transform "AffineTransform")
 //(GradientMagnitudeTolerance 1e-7)
-(NumberOfResolutions 2)
+(NumberOfResolutions 3)
 
 //(ImagePyramidSchedule  8 8 2  4 4 1  2 2 1 )
-(ImagePyramidSchedule  4 4 4  2 2 2)
+(FixedImagePyramidSchedule  16 16 16 8 8 8 4 4 4)
+(MovingImagePyramidSchedule  4 4 4 2 2 2 1 1 1)
 
 //ImageTypes
 (FixedInternalImagePixelType "short")
@@ -543,7 +544,7 @@ elastixParameterTemplateString = """
 (NumberOfSpatialSamples 2048)
 (NewSamplesEveryIteration "true")
 (CheckNumberOfSamples "true")
-(MaximumNumberOfIterations 500 200)
+(MaximumNumberOfIterations 2000 1000 500)
 //(MaximumNumberOfSamplingAttempts 10)
 
 //Order of B-Spline interpolation used in each resolution level:
