@@ -380,6 +380,8 @@ def getParamsFromElastix(images,initialParams=None,
             parameterTemplateString = elastixParameterTemplateStringRotation
         elif mode == 'similarity':
             parameterTemplateString = elastixParameterTemplateStringSimilarity
+        elif mode == 'nonrigid':
+            parameterTemplateString = elastixParameterTemplateStringNonRigid
         else:
             raise(Exception('check registration mode'))
 
@@ -398,41 +400,45 @@ def getParamsFromElastix(images,initialParams=None,
         # read output parameters from elastix output file
         rawOutParams = open(outFile).read()
 
-        outParams = rawOutParams.split('\n')[2][:-1].split(' ')[1:]
-        outParams = n.array([float(i) for i in outParams])
-        outCenterOfRotation = rawOutParams.split('\n')[19][:-1].split(' ')[1:]
-        outCenterOfRotation = n.array([float(i) for i in outCenterOfRotation])
-        if len(outParams)==6:
-            tmp = transformations.euler_matrix(outParams[0],outParams[1],outParams[2])
-            affineOutParams = n.zeros(12)
-            affineOutParams[:9] = tmp[:3,:3].flatten()
-            affineOutParams[-3:] = n.array([outParams[3],outParams[4],outParams[5]])
-        elif len(outParams)==12:
-            affineOutParams = outParams
-        # elif len(outParams)==7:
-        #     tmp = transformations.compose_matrix(scale=n.array([outParams[6]]*3),
-        #                                          angles=n.array([outParams[0],outParams[1],outParams[2]]),
-        #                                          translate=n.array([outParams[3],outParams[4],outParams[5]]))
-        #     affineOutParams = n.zeros(12)
-        #     pdb.set_trace()
-        #     affineOutParams[:9] = tmp[:3,:3].flatten()
-        #     affineOutParams[-3:] = tmp[:3,3]
-        elif len(outParams)==7:
-            angles = transformations.euler_from_quaternion([n.sqrt(1-n.sum([n.power(outParams[i],2) for i in range(3)])),
-                                                            outParams[0],outParams[1],outParams[2]])
-            tmp = transformations.compose_matrix(#scale=n.array([outParams[6]]*3),
-                                                 angles=angles)
-                                                 #translate=n.array([outParams[3],outParams[4],outParams[5]]))
-            affineOutParams = n.zeros(12)
-            # pdb.set_trace()
-            affineOutParams[:9] = tmp[:3,:3].flatten()*outParams[6]
-            affineOutParams[-3:] = n.array([outParams[3],outParams[4],outParams[5]])
+        if mode == 'nonrigid':
+            lastParams = rawOutParams
+        else:
 
-        else: raise(Exception('unable to interpret parameters'))
+            outParams = rawOutParams.split('\n')[2][:-1].split(' ')[1:]
+            outParams = n.array([float(i) for i in outParams])
+            outCenterOfRotation = rawOutParams.split('\n')[19][:-1].split(' ')[1:]
+            outCenterOfRotation = n.array([float(i) for i in outCenterOfRotation])
+            if len(outParams)==6:
+                tmp = transformations.euler_matrix(outParams[0],outParams[1],outParams[2])
+                affineOutParams = n.zeros(12)
+                affineOutParams[:9] = tmp[:3,:3].flatten()
+                affineOutParams[-3:] = n.array([outParams[3],outParams[4],outParams[5]])
+            elif len(outParams)==12:
+                affineOutParams = outParams
+            # elif len(outParams)==7:
+            #     tmp = transformations.compose_matrix(scale=n.array([outParams[6]]*3),
+            #                                          angles=n.array([outParams[0],outParams[1],outParams[2]]),
+            #                                          translate=n.array([outParams[3],outParams[4],outParams[5]]))
+            #     affineOutParams = n.zeros(12)
+            #     pdb.set_trace()
+            #     affineOutParams[:9] = tmp[:3,:3].flatten()
+            #     affineOutParams[-3:] = tmp[:3,3]
+            elif len(outParams)==7:
+                angles = transformations.euler_from_quaternion([n.sqrt(1-n.sum([n.power(outParams[i],2) for i in range(3)])),
+                                                                outParams[0],outParams[1],outParams[2]])
+                tmp = transformations.compose_matrix(#scale=n.array([outParams[6]]*3),
+                                                     angles=angles)
+                                                     #translate=n.array([outParams[3],outParams[4],outParams[5]]))
+                affineOutParams = n.zeros(12)
+                # pdb.set_trace()
+                affineOutParams[:9] = tmp[:3,:3].flatten()*outParams[6]
+                affineOutParams[-3:] = n.array([outParams[3],outParams[4],outParams[5]])
 
-        totalTranslate = affineOutParams[-3:] - n.dot(affineOutParams[:9].reshape((3,3)),outCenterOfRotation) + outCenterOfRotation
-        affineOutParams = n.concatenate([affineOutParams[:9],totalTranslate],0)
-        lastParams = composeAffineTransformations([affineOutParams,params[iim]])
+            else: raise(Exception('unable to interpret parameters'))
+
+            totalTranslate = affineOutParams[-3:] - n.dot(affineOutParams[:9].reshape((3,3)),outCenterOfRotation) + outCenterOfRotation
+            affineOutParams = n.concatenate([affineOutParams[:9],totalTranslate],0)
+            lastParams = composeAffineTransformations([affineOutParams,params[iim]])
 
         finalParams.append(lastParams)
 
@@ -781,4 +787,140 @@ elastixParameterTemplateStringSimilarity = """
 // The pixel type and format of the resulting deformed moving image
 (ResultImagePixelType "float")
 (ResultImageFormat "mhd")
+"""
+
+elastixParameterTemplateStringNonRigid = \
+"""
+// Description
+// Stage: non-rigid
+//
+// Author:      Roy van Pelt
+// Affiliation: Eindhoven University of Technology
+// Year:        2013
+
+// ********** Image Types
+
+(FixedInternalImagePixelType "float")
+(FixedImageDimension 3)
+(MovingInternalImagePixelType "float")
+(MovingImageDimension 3)
+
+
+// ********** Components
+
+(Registration "MultiResolutionRegistration")
+//(FixedImagePyramid "FixedRecursiveImagePyramid")
+(FixedImagePyramid "FixedSmoothingImagePyramid")
+(MovingImagePyramid "MovingSmoothingImagePyramid")
+//(MovingImagePyramid "MovingRecursiveImagePyramid")
+(Interpolator "BSplineInterpolator")
+(Metric "AdvancedMattesMutualInformation")
+
+(Optimizer "AdaptiveStochasticGradientDescent")
+//(Optimizer "QuasiNewtonLBFGS")
+//(GradientMagnitudeTolerance 1e-6)
+
+(ResampleInterpolator "FinalBSplineInterpolator")
+(Resampler "DefaultResampler")
+(Transform "BSplineTransform")
+
+
+// ********** Pyramid
+
+// Total number of resolutions
+(NumberOfResolutions 3)
+//(ImagePyramidSchedule 8 8 8 3 3 3 1 1 1)
+(MovingImagePyramidSchedule 4 4 4 2 2 2 1 1 1)
+(FixedImagePyramidSchedule 16 16 16 8 8 8 4 4 4)
+
+
+// ********** Transform
+
+//(GridSpacingSchedule 8 8 8 4 4 4 2 2 2)
+(FinalGridSpacingInPhysicalUnits 20 20 20)
+//(GridSpacingSchedule 8 8 8 4 4 4 2 2 2)
+
+(HowToCombineTransforms "Compose")
+
+
+// ********** Optimizer
+
+// Maximum number of iterations in each resolution level:
+//(MaximumNumberOfIterations 300 200 100)
+
+//(MaximumNumberOfIterations 1000 500 250)
+(MaximumNumberOfIterations 2000 1000 500)
+
+//(MaximumNumberOfIterations 3000 1500 750)
+
+(AutomaticParameterEstimation "true")
+(UseAdaptiveStepSizes "true")
+(NumberOfHistogramBins 64 64)
+(NumberOfFixedHistogramBins 64 64)
+(NumberOfMovingHistogramBins 64 64)
+
+
+//(NumberOfGradientMeasurements 0)
+//(NumberOfJacobianMeasurements 4056)
+//(NumberOfBandStructureSamples 10)
+//(MaximumStepLength 2.29829)
+//(MaxBandCovSize 192)
+//(SigmoidInitialTime 0 0 0)
+//(SigmoidScaleFactor 0.1)
+
+
+// ********** Several
+
+(WriteTransformParametersEachIteration "false")
+(WriteTransformParametersEachResolution "false")
+(WriteResultImageAfterEachResolution "false")
+(WritePyramidImagesAfterEachResolution "false")
+(ShowExactMetricValue "false")
+(ErodeFixedMask "false" "false")
+(ErodeMovingMask "false" "false")
+(UseDirectionCosines "true")
+(FixedLimitRangeRatio 0.01 0.01)
+(MovingLimitRangeRatio 0.01 0.01)
+(UseFastAndLowMemoryVersion "true")
+//(SP_A 20.0 )
+
+
+// ********** ImageSampler
+
+//Number of spatial samples used to compute the mutual information in each resolution level:
+(ImageSampler "RandomCoordinate")
+//(ImageSampler "Full")
+(CheckNumberOfSamples "false" "false" "false")
+(NumberOfSpatialSamples 2048 4096 4096)
+//(NumberOfSpatialSamples 8096 16384 16384)
+
+(NumberOfSamplesForSelfHessian 10000)
+(NumberOfSamplesForExactGradient 10000)
+(NewSamplesEveryIteration "true")
+(UseRandomSampleRegion "false")
+(MaximumNumberOfSamplingAttempts 0 0 0)
+
+
+// ********** Interpolator and Resampler
+
+//Order of B-Spline interpolation used in each resolution level:
+(BSplineInterpolationOrder 1 1 1)
+(FixedImageBSplineInterpolationOrder 1 1 1)
+(MovingImageBSplineInterpolationOrder 1 1 1)
+(FixedKernelBSplineOrder 3 3 3) // 0 for binary
+(MovingKernelBSplineOrder 3 3 3)
+
+//Order of B-Spline interpolation used for applying the final deformation:
+(FinalBSplineInterpolationOrder 3)
+
+//Default pixel value for pixels that come from outside the picture:
+(DefaultPixelValue 0)
+
+(WriteResultImage "true")
+(CompressResultImage "false")
+
+// The pixel type and format of the resulting deformed moving image
+(ResultImagePixelType "float")
+(ResultImageFormat "mhd")
+
 """

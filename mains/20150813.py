@@ -5,12 +5,10 @@ sys.path = [sys.path[0]]+['..']+sys.path[1:]
 from dependencies import *
 
 # samples = [1,2,4,5,9]#,10,13,14,15,16]
-samples = [10,13,14,15,16]
-reference = sitk.ReadImage('/data/malbert/atlas/references/65dpf_af_gfp/20150810/output/stack1.tif')
-# samples = [1,2,4,5,9,10,13,14,15,16]
 # samples = [10,13,14,15,16]
-
-
+reference = sitk.ReadImage('/data/malbert/atlas/references/65dpf_af_gfp/20150810/output/stack1.tif')
+samples = [1,2,4,5,9,10,13,14,15,16]
+# samples = [10,13,14,15,16]
 
 bs = []
 for isample,sample in enumerate(samples):

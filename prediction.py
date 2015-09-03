@@ -133,8 +133,11 @@ class FilterSegmentation(descriptors.ChannelData):
             # tmpRes = imaging.gaussian3d(so,(2,2,4.))
             tmpRes = sitk.SmoothingRecursiveGaussian(so,2)
             tmpRes = sitk.Laplacian(tmpRes)
-            tmpRes = sitk.Cast(tmpRes<-2,3)#*sitk.Cast(sitk.Abs(tmpRes),3)
+            tmpRes = sitk.Cast(tmpRes<-5,3)#*sitk.Cast(sitk.Abs(tmpRes),3)
             tmpRes = sitk.gafi(tmpRes)
+
+            tmpRes,N = ndimage.label(tmpRes)
+            tmpRes = imaging.mySizeFilter(tmpRes,5000,1000000000000)
 
             tmpFile = h5py.File(self.baseData[time].file.filename)
             tmpFile[self.nickname] = tmpRes

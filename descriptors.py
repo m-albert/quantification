@@ -326,7 +326,13 @@ class RawChannel(ChannelData):
 
             else: raise(Exception('check load format'))
 
-            filing.toH5(tmpData,self.getFileName(time),hierarchy=self.hierarchy)
+            if not os.path.exists(self.getFileName(time)):
+                filing.toH5(tmpData,self.getFileName(time),hierarchy=self.hierarchy)
+            else:
+                tmpFile = h5py.File(self.getFileName(time))
+                tmpFile[self.hierarchy] = tmpData
+                tmpFile.close()
+
             outDict[time] = H5Array(self.getFileName(time))
 
         return outDict
