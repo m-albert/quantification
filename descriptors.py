@@ -5,16 +5,70 @@ from dependencies import *
 import shutil
 
 config['relRawDataDir'] = "raw_ch%d"
+# config['relRawDataDir'] = "Stack_2_Channel_%d"
 
 config['fileNameFormat'] = "f%06d.h5"
+# config['fileNameFormat'] = "Cam_Right_%05d.h5"
 
 config['rawHierarchy'] = 'DS1'
+# config['rawHierarchy'] = 'Data'
 
 config['unstructuredDataDir'] = "unstructured"
 
 
 # def H5Array(filename):
 #     return h5py.File(filename)[config['hierarchy']]
+
+class H5Pointer(object):
+
+    def __init__(self,fileName,hierarchy):
+        self.fileName = fileName
+        self.hierarchy = hierarchy
+
+    def __get__(self,instance,owner):
+        return h5py.File(self.fileName)[self.hierarchy]
+
+# class H5Pointer(object):
+#
+#     def __init__(self,filename,hierarchy):
+#         print 'instanciating stack for file %s' %filename
+#         self.filename = filename
+#         self.hierarchy = hierarchy
+#         self.file = None
+#         self.dataset = None
+#         return
+#
+#     def __get__(self,instance,owner):
+#         # open file only if needed
+#
+#         if self.file is None:
+#             print 'opening file %s' %self.filename
+#             self.file = h5py.File(self.filename)
+#             if not self.hierarchy in self.file.keys(): raise(Exception('could not find dataset with name %s in file %s' %(self.hierarchy,self.filename)))
+#             self.dataset = self.file[self.hierarchy]
+#
+#         if len(self.dataset.shape) < 2:
+#             returnData = n.array(self.dataset)
+#             self.close()
+#             return returnData
+#         else:
+#             return self.dataset
+#
+#     def __set__(self,value):
+#         raise(Exception('no setting possible!'))
+#
+#     def __del__(self):
+#         print 'closing file %s' %self.filename
+#         self.close()
+#         return
+#
+#     def close(self):
+#         self.dataset = None
+#         if not self.file is None:
+#             self.file.close()
+#             self.file = None
+#         return
+
 
 
 class H5Array(object):
@@ -65,6 +119,50 @@ class H5Array(object):
         return self.__get__(self,H5Array)[item]
 
 
+class Image(object):
+
+    def __init__(self,fileName,spacing=None,shape=None,origin=None):
+        self.fileName = fileName
+        self.data = None
+        self.spacing = spacing
+        self.shape = shape
+        self.origin = origin
+        self.min = None
+        self.max = None
+        self.slices = None
+        return
+
+    def gi(self):
+        tmpIm = self.gifa(self.data)
+        tmpIm.SetSpacing(self.spacing)
+        tmpIm.SetOrigin(self.origin)
+        return tmpIm
+
+    def ga(self):
+        pass
+
+    def __getattribute__(self,name):
+        if not self.__dict__.has_key(name):
+            raise(AttributeError)
+        else:
+            if self.data is None:
+                print 'loading Image: %s' %self.fileName
+                tmpImage = sitk.ReadImage(self.fileName)
+                self.data = sitk.gafi(tmpImage)
+                self.shape = n.array(self.data.GetSize())
+                self.origin = n.array(self.data.GetOrigin())
+                self.spacing = n.array(self.data.GetSpacing())
+
+            if name in ['slices','minCoord','maxCoord'] and self.__dict__[name] is None:
+                tmp = n.array(self.data.nonzero())
+                self.minCoord = n.min(tmp,1)
+                self.maxCoord = n.max(tmp,1)
+                self.slices = tuple([slice(self.minCoord[i],self.maxCoord[i]) for i in range(3)])
+
+        return self.__dict__[name]
+
+
+
 class ChannelData(object):
 
     # abstract class for channel image data, to be subclassed for
@@ -110,14 +208,14 @@ class ChannelData(object):
         raise(Exception('no setting possible!'))
 
     def __getitem__(self,item):
-        try:
-            item = int(item)
-            if not self.timesDict.has_key(item):
-                print '%s: preparing time %s' %(self.nickname,item)
-                self.timesDict[item] = self.prepareTimepoints([item],self.redo)[item]
-                # self.timesDict[item] = Stack(self.getFileName(item))
-            return self.timesDict[item].__get__(self,self.timepointClass)
-        except: pass
+        item = int(item)
+        if not self.timesDict.has_key(item):
+            print '%s: preparing time %s' %(self.nickname,item)
+            self.timesDict[item] = self.prepareTimepoints([item],self.redo)[item]
+            # self.timesDict[item] = Stack(self.getFileName(item))
+        # return self.timesDict[item].__get__(self,self.timepointClass)
+        return self.timesDict[item].__get__(self,0)
+        # return self.timesDict[item]#.__get__(self,self.timepointClass)
         if type(item) == tuple and len(item) == 2:
             return self[item[0]][item[1]]
         elif type(item) == list or (type(item) == n.ndarray and len(item.shape) == 1):
@@ -173,6 +271,75 @@ class ChannelData(object):
             self.timesDict[int(time)].close()
         except:
             print 'could not close'
+
+class IndependentChannel(ChannelData):
+
+    # abstract class for channel image data, to be subclassed for
+    # raw data, prediction, etc. by adding prepareTimepoints method
+    # (and possibly more)
+
+    def __init__(self,parent,baseData,nickname,processClass,redo=False,*args,**kargs):
+
+        # no dir setting here?
+
+        self.baseData = baseData
+        self.dir = self.baseData.dir
+
+        self.processObject = processClass(*args)
+        # self.parent = parent
+        self.nickname = nickname
+        self.redo = redo
+
+        super(IndependentChannel,self).__init__(parent,nickname,*args,**kargs)
+        return
+
+    def prepareTimepoints(self,times,redo):
+
+        outDict = dict()
+
+        alreadyDoneTimes, toDoTimes = [],[]
+        for itime,time in enumerate(times):
+            tmpFile = h5py.File(self.baseData.getFileName(time))
+            if self.nickname in tmpFile.keys():
+                if redo:
+                    del tmpFile[self.nickname]
+                    toDoTimes.append(time)
+                else:
+                    alreadyDoneTimes.append(time)
+                    outDict[time] = self.processObject.fromFile(self.getFileName(time),hierarchy=self.nickname)
+            else:
+                toDoTimes.append(time)
+            tmpFile.close()
+
+        print 'already prepared: %s\nto prepare: %s\n' %(alreadyDoneTimes,toDoTimes)
+
+        if not len(toDoTimes): return outDict
+
+        for itime,time in enumerate(toDoTimes):
+
+            tmpFile = h5py.File(self.baseData.getFileName(time))
+
+            tmpPrefix = self.nickname+'_'
+
+            for group in tmpFile.keys():
+                if tmpPrefix in group: del tmpFile[group]
+
+            tmpString = tmpPrefix + str(n.random.randint(0,1000000000000000,1)[0])
+            while tmpString in tmpFile.keys():
+                tmpString = tmpPrefix + str(n.random.randint(0,1000000000000000,1)[0])
+
+            tmpGroup = tmpFile.create_group(tmpString)
+
+            self.processObject.fromFrame(self.baseData[time],tmpGroup)
+
+            tmpFile.move(tmpString,self.nickname)
+
+            # outDict[time] = descriptors.H5Pointer(rootFile.filename,nickname)
+            outDict[time] = self.processObject.timepointClass(self.baseData.getFileName(time),self.nickname)
+
+            tmpFile.close()
+
+        return outDict
 
 class Tupable(object):
 
@@ -281,9 +448,10 @@ class RawChannel(ChannelData):
         self.timepointClass = H5Array
         self.channel = channel
         self.hierarchy = 'DS1'
-
+        # self.hierarchy = 'Data' #malbert
         super(RawChannel,self).__init__(parent,nickname,*args,**kargs)
         self.parent.shape = self[self.parent.times[0]].shape
+        return
 
     def prepareTimepoints(self,times,redo):
         print 'preparing timepoints %s' %times

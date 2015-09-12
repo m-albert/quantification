@@ -7,6 +7,9 @@ from dependencies import *
 # samples = [1,2,4,5,9]#,10,13,14,15,16]
 # samples = [10,13,14,15,16]
 reference = sitk.ReadImage('/data/malbert/atlas/references/65dpf_af_gfp/20150810/output/stack1.tif')
+mask = sitk.ReadImage('/data/malbert/atlas/references/65dpf_af_gfp/20150810/output/reference_scaled448_mask.tif')
+mask.SetSpacing([4,4,8])
+mask = sitk.Resample(mask,reference)
 samples = [1,2,4,5,9,10,13,14,15,16]
 # samples = [10,13,14,15,16]
 
@@ -25,5 +28,6 @@ for isample,sample in enumerate(samples):
     registration.Transformation(b,b.p2y12,b.intrareg,'intraaligned',redo=False)
 
     prediction.FilterSegmentation(b,b.interaligned,'seg')
+    prediction.MaskedSegmentation(b,b.seg,mask,'ms')
 
     bs.append(b)

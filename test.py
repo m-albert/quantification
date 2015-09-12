@@ -52,3 +52,6 @@ for i in range(9):
     bs[0].seg[1]-bs[0].seg[0]
 
 ndimage.generic_filter_sum
+
+
+reference = sitk.ReadImage('/data/malbert/atlas/references/45dpf_af_gfp/20150811/output/stack1.tif')

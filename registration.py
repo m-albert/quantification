@@ -71,6 +71,8 @@ class RegistrationParameters(descriptors.ChannelData):
         if not len(toDoTimes): return outDict
 
         # process reference image
+        if type(self.reference) == descriptors.Image:
+            self.reference = self.reference.gi()
         if type(self.reference) == int:
             tmpImage = sitk.gifa(self.baseData[self.parent.times[self.reference]])
         elif type(self.reference) == sitk.Image:
@@ -221,7 +223,12 @@ class Transformation(descriptors.ChannelData):
 
         if not len(toDoTimes): return outDict
 
-        refIm = sitk.gifa(self.baseData[0])
+        if type(self.paramsData.reference) == int:
+            refIm = sitk.gifa(self.baseData[0])
+        elif type(self.paramsData.reference) == descriptors.Image:
+            refIm = self.paramsData.reference.gi()
+        else: refIm = self.paramsData.reference
+
         if not (self.mask is None):
             mask = sitk.Cast(self.mask,refIm.GetPixelID())
 
@@ -264,6 +271,7 @@ def transformStackAndRef(p,stack,refStack):
 def transformStack(p,stack,outShape=None,outSpacing=None,outOrigin=None):
     # can handle composite transformations (len(p)%12)
     # 20140326: added outOrigin option
+
     numpyarray = False
     if type(stack)==n.ndarray:
         numpyarray = True
@@ -284,8 +292,25 @@ def transformStack(p,stack,outShape=None,outSpacing=None,outOrigin=None):
     if outOrigin is None: outOrigin = stack.GetOrigin()
     else: outOrigin = n.array(outOrigin)
     print stack.GetSize(),shape
-    #pdb.set_trace()
+    # pdb.set_trace()
     newim = sitk.Resample(stack,shape,transf,sitk.sitkLinear,outOrigin,outSpacing)
+    if numpyarray:
+        newim = sitk.GetArrayFromImage(newim)
+    return newim
+
+def scaleStack(p,stack):
+    # expects three values
+    p = n.array(p,dtype=n.float64)[::-1]
+    numpyarray = False
+    if type(stack)==n.ndarray:
+        numpyarray = True
+        stack = sitk.GetImageFromArray(stack)
+    transf = sitk.Transform(3,2)
+    transf.SetParameters(p)
+    #print tuple((n.array(oldim.GetSize())/p).astype('uint64'))
+    newSize = tuple([int(i) for i in n.array(stack.GetSize())/p])
+    newim = sitk.Resample(stack,newSize,transf,sitk.sitkLinear)
+    #newim = sitk.Resample(oldim,oldim.GetSize(),transf)
     if numpyarray:
         newim = sitk.GetArrayFromImage(newim)
     return newim
@@ -322,7 +347,9 @@ def createInitialTransformFile(spacing,params,template,outPath):
 
 def getParamsFromElastix(images,initialParams=None,
                          elastixPath='/home/malbert/software/fusion/dependencies_linux/elastix_linux64_v4.7/bin/elastix',
-                         tmpDir='/data/malbert/tmp',mode='similarity',
+                         transformixPath='/home/malbert/software/fusion/dependencies_linux/elastix_linux64_v4.7/bin/transformix',
+                         tmpDir='/data/malbert/tmp',
+                         mode='similarity',
                          masks=None):
 
     """
@@ -347,6 +374,12 @@ def getParamsFromElastix(images,initialParams=None,
     elif type(images[0]) == str:
         fiPath = images[0]
 
+    elif type(images[0]) == n.ndarray:
+
+        fiPath = os.path.join(tmpDir,'tmpFixedImage.mhd')
+        sitk.WriteImage(sitk.gifa(images[0]),fiPath)
+        wroteFixed = False
+
     else:
         raise(Exception('check input'))
 
@@ -363,6 +396,12 @@ def getParamsFromElastix(images,initialParams=None,
         elif type(images[iim]) == str:
             miPath = images[iim]
 
+        elif type(images[iim]) == n.ndarray:
+
+            sitk.WriteImage(sitk.gifa(images[iim]),os.path.join(tmpDir,'tmpMovingImage.mhd'))
+            miPath = os.path.join(tmpDir,'tmpMovingImage.mhd')
+            wroteMoving = False
+
         else:
             raise(Exception('check input'))
 
@@ -370,29 +409,54 @@ def getParamsFromElastix(images,initialParams=None,
         paramDict = dict()
 
         paramDict['el'] = elastixPath
-        parameterPath = os.path.join(tmpDir,'elastixParameters.txt')
+        parameterPaths = [os.path.join(tmpDir,'elastixParameters%s.txt' %i) for i in range(len(mode))]
         initialTransformPath = os.path.join(tmpDir,'elastixInitialTransform.txt')
         paramDict['out'] = tmpDir
         createInitialTransformFile(n.array([1,1,1.]),params[iim],elastixInitialTransformTemplateString,initialTransformPath)
-        if mode == 'affine':
-            parameterTemplateString = elastixParameterTemplateString
-        elif mode == 'rigid':
-            parameterTemplateString = elastixParameterTemplateStringRotation
-        elif mode == 'similarity':
-            parameterTemplateString = elastixParameterTemplateStringSimilarity
-        elif mode == 'nonrigid':
-            parameterTemplateString = elastixParameterTemplateStringNonRigid
-        else:
-            raise(Exception('check registration mode'))
 
-        createParameterFile(n.array([1,1,1.]),initialTransformPath,parameterTemplateString,parameterPath)
-        paramDict['params'] = parameterPath
+        def getString(mode):
+            if mode == 'affine':
+                parameterTemplateString = elastixParameterTemplateString
+            elif mode == 'rigid':
+                parameterTemplateString = elastixParameterTemplateStringRotation
+            elif mode == 'similarity':
+                parameterTemplateString = elastixParameterTemplateStringSimilarity
+            elif mode == 'nonrigid':
+                parameterTemplateString = elastixParameterTemplateStringNonRigidWithPenalty
+            else:
+                raise(Exception('check registration mode'))
+            return parameterTemplateString
+
+        if type(mode) == list:
+            # if not (initialParams is None): raise(Exception('no initial transformation plus composition supported'))
+            parameterTemplateStrings = [getString(s) for s in mode]
+        else:
+            parameterTemplateStrings = getString(mode)
+
+        # write parameter files
+        # if not type(mode) == list:
+        createParameterFile(n.array([1,1,1.]),initialTransformPath,parameterTemplateStrings[0],parameterPaths[0])
+        # else:
+        for i in range(1,len(parameterPaths)):
+            tmpFile = open(parameterPaths[i],'w')
+            tmpFile.write(parameterTemplateStrings[i])
+            tmpFile.close()
+
+        # paramDict['params'] = parameterPath
         paramDict['f1'] = fiPath
         paramDict['f2'] = miPath
         paramDict['initialTransform'] = initialTransformPath
 
         # run elastix
-        cmd = ('%(el)s -f %(f1)s -m %(f2)s -p %(params)s -t0 %(initialTransform)s -out %(out)s' %paramDict).split(' ')
+        # cmd = ('%(el)s -f %(f1)s -m %(f2)s -p %(params)s -t0 %(initialTransform)s -out %(out)s' %paramDict).split(' ')
+        cmd = ('%(el)s -f %(f1)s -m %(f2)s' %paramDict)
+        for s in parameterPaths:
+            cmd += ' -p %s' %s
+        if not type(mode) == list:
+            cmd += ' -t0 %(initialTransform)s'
+        cmd += ' -out %(out)s' %paramDict
+        cmd = cmd.split(' ')
+
         print "\n\nCalling elastix for image based registration with arguments:\n\n %s\n\n" %cmd
         subprocess.Popen(cmd).wait()
 
@@ -400,7 +464,7 @@ def getParamsFromElastix(images,initialParams=None,
         # read output parameters from elastix output file
         rawOutParams = open(outFile).read()
 
-        if mode == 'nonrigid':
+        if mode == 'nonrigid' or type(mode) == list:
             lastParams = rawOutParams
         else:
 
@@ -443,6 +507,17 @@ def getParamsFromElastix(images,initialParams=None,
         finalParams.append(lastParams)
 
         # if masks is not None: os.remove(miMaskPath)
+        if type(mode) == list:
+            outputDirectory = os.path.dirname(miPath)
+            for i in range(len(mode)):
+                if not i: inputImagePath = miPath
+                else: inputImagePath = os.path.join(os.path.dirname(miPath),'result.mhd')
+                transformPath = os.path.join(os.path.dirname(miPath),'TransformParameters.%s.txt' %i)
+                cmd = '%s -in %s -out %s -tp %s' %(transformixPath,inputImagePath,outputDirectory,transformPath)
+                cmd = cmd.split(' ')
+                subprocess.Popen(cmd).wait()
+
+
     if wroteFixed:
         os.remove(fiPath)
         os.remove(fiPath[:-3]+'raw')
@@ -452,6 +527,78 @@ def getParamsFromElastix(images,initialParams=None,
 
     finalParams = n.array(finalParams)
     return finalParams
+
+
+def getParamsFromElastixCompose(images,initialParams = None,
+                         elastixPath='/home/malbert/software/fusion/dependencies_linux/elastix_linux64_v4.7/bin/elastix',
+                         transformixPath='/home/malbert/software/fusion/dependencies_linux/elastix_linux64_v4.7/bin/transformix',
+                         tmpDir='/data/malbert/tmp',
+                         mode='similarity',
+                         masks=None):
+
+    os.environ['LD_LIBRARY_PATH'] = os.path.join(os.path.dirname(os.path.dirname(elastixPath)),'lib')
+
+    def getString(mode):
+        if mode == 'affine':
+            parameterTemplateString = elastixParameterTemplateString
+        elif mode == 'rigid':
+            parameterTemplateString = elastixParameterTemplateStringRotation
+        elif mode == 'similarity':
+            parameterTemplateString = elastixParameterTemplateStringSimilarity
+        elif mode == 'nonrigid':
+            parameterTemplateString = elastixParameterTemplateStringNonRigidWithPenalty
+        else:
+            raise(Exception('check registration mode'))
+        return parameterTemplateString
+
+    fiPath = os.path.join(tmpDir,'tmpFixedImage.mhd')
+    sitk.WriteImage(images[0],fiPath)
+
+    miPath = os.path.join(tmpDir,'tmpMovingImage.mhd')
+    sitk.WriteImage(images[1],miPath)
+
+    outDirs = [os.path.join(tmpDir,'ElastixCompose%s' %it) for it in range(len(mode))]
+    for it in range(len(mode)):
+        if not os.path.exists(outDirs[it]): os.mkdir(outDirs[it])
+
+    initialTransformPath = os.path.join(tmpDir,'InitialTransform.txt')
+    parameterPath = os.path.join(tmpDir,'TransformParameters.0.txt')
+
+    if initialParams is None:
+        params = n.array([1.,0,0,0,1,0,0,0,1,0,0,0])
+    else:
+        params = initialParams
+
+    for it in range(len(mode)):
+        paramDict = dict()
+        paramDict['el'] = elastixPath
+        paramDict['out'] = outDirs[it]
+
+        parameterTemplateString = getString(mode[it])
+        if it:
+            miPath = os.path.join(outDirs[it-1],'result.mhd')
+            createParameterFile(n.array([1,1,1.]),os.path.join(outDirs[it-1],'TransformParameters.0.txt'),parameterTemplateString,parameterPath)
+            paramDict['initialTransform'] = os.path.join(outDirs[it-1],'TransformParameters.0.txt')
+
+        else:
+            createInitialTransformFile(n.array([1,1,1.]),params,elastixInitialTransformTemplateString,initialTransformPath)
+            createParameterFile(n.array([1,1,1.]),initialTransformPath,parameterTemplateString,parameterPath)
+            paramDict['initialTransform'] = initialTransformPath
+
+        paramDict['f1'] = fiPath
+        paramDict['f2'] = miPath
+        paramDict['params'] = parameterPath
+
+        cmd = ('%(el)s -f %(f1)s -m %(f2)s -p %(params)s -t0 %(initialTransform)s -out %(out)s' %paramDict).split(' ')
+
+        print "\n\nCalling elastix for image based registration with arguments:\n\n %s\n\n" %cmd
+        subprocess.Popen(cmd).wait()
+
+        cmd = '%s -in %s -out %s -tp %s' %(transformixPath,miPath,outDirs[it],os.path.join(outDirs[it],'TransformParameters.0.txt'))
+        cmd = cmd.split(' ')
+        subprocess.Popen(cmd).wait()
+
+    return
 
 
 elastixInitialTransformTemplateString = """
@@ -483,9 +630,9 @@ elastixParameterTemplateString = """
 //(GradientMagnitudeTolerance 1e-7)
 (NumberOfResolutions 3)
 
-//(ImagePyramidSchedule  8 8 2  4 4 1  2 2 1 )
-(FixedImagePyramidSchedule  16 16 16 8 8 8 4 4 4)
-(MovingImagePyramidSchedule  4 4 4 2 2 2 1 1 1)
+(ImagePyramidSchedule  16 16 16 8 8 8 4 4 4 )
+//(FixedImagePyramidSchedule  16 16 16 8 8 8 4 4 4)
+//(MovingImagePyramidSchedule  4 4 4 2 2 2 1 1 1)
 
 //ImageTypes
 (FixedInternalImagePixelType "short")
@@ -580,9 +727,9 @@ elastixParameterTemplateStringRotation = """
 (NumberOfResolutions 3)
 
 //(ImagePyramidSchedule  8 8 2  4 4 1  2 2 1 )
-//(ImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
-(FixedImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
-(MovingImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
+(ImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
+//(FixedImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
+//(MovingImagePyramidSchedule 8 8 4 4 4 2 2 2 1)
 
 //ImageTypes
 (FixedInternalImagePixelType "short")
@@ -916,11 +1063,152 @@ elastixParameterTemplateStringNonRigid = \
 //Default pixel value for pixels that come from outside the picture:
 (DefaultPixelValue 0)
 
-(WriteResultImage "true")
+(WriteResultImage "false")
 (CompressResultImage "false")
 
 // The pixel type and format of the resulting deformed moving image
 (ResultImagePixelType "float")
 (ResultImageFormat "mhd")
 
+"""
+
+elastixParameterTemplateStringNonRigidWithPenalty = \
+"""
+// Description
+// Stage: non-rigid
+//
+// Author:      Roy van Pelt
+// Affiliation: Eindhoven University of Technology
+// Year:        2013
+
+// ********** Image Types
+
+(FixedInternalImagePixelType "float")
+(FixedImageDimension 3)
+(MovingInternalImagePixelType "float")
+(MovingImageDimension 3)
+
+
+// ********** Components
+
+(Metric "AdvancedMattesMutualInformation" "TransformRigidityPenalty")
+(Metric0Weight 0.5)
+(Metric1Weight 0.5)
+
+(Registration "MultiMetricMultiResolutionRegistration")
+//(FixedImagePyramid "FixedRecursiveImagePyramid")
+(FixedImagePyramid "FixedSmoothingImagePyramid")
+(MovingImagePyramid "MovingSmoothingImagePyramid")
+//(MovingImagePyramid "MovingRecursiveImagePyramid")
+(Interpolator "BSplineInterpolator")
+//(Metric "AdvancedMattesMutualInformation")
+
+(Optimizer "AdaptiveStochasticGradientDescent")
+//(Optimizer "QuasiNewtonLBFGS")
+//(GradientMagnitudeTolerance 1e-6)
+
+(ResampleInterpolator "FinalBSplineInterpolator")
+(Resampler "DefaultResampler")
+(Transform "BSplineTransform")
+
+
+// ********** Pyramid
+
+// Total number of resolutions
+(NumberOfResolutions 3)
+(ImagePyramidSchedule 16 16 16 8 8 8 4 4 4)
+//(MovingImagePyramidSchedule 4 4 4 2 2 2 1 1 1)
+//(FixedImagePyramidSchedule 16 16 16 8 8 8 4 4 4)
+
+
+// ********** Transform
+
+//(GridSpacingSchedule 8 8 8 4 4 4 2 2 2)
+(FinalGridSpacingInPhysicalUnits 50 50 50)
+//(GridSpacingSchedule 8 8 8 4 4 4 1 1 1)
+
+(HowToCombineTransforms "Compose")
+
+
+// ********** Optimizer
+
+// Maximum number of iterations in each resolution level:
+//(MaximumNumberOfIterations 300 200 100)
+
+//(MaximumNumberOfIterations 1000 500 250)
+//(MaximumNumberOfIterations 2000 1000 500)
+(MaximumNumberOfIterations 2000 1000 500)
+
+
+//(MaximumNumberOfIterations 3000 1500 750)
+
+(AutomaticParameterEstimation "true")
+(UseAdaptiveStepSizes "true")
+(NumberOfHistogramBins 64 64)
+(NumberOfFixedHistogramBins 64 64)
+(NumberOfMovingHistogramBins 64 64)
+
+
+//(NumberOfGradientMeasurements 0)
+//(NumberOfJacobianMeasurements 4056)
+//(NumberOfBandStructureSamples 10)
+//(MaximumStepLength 2.29829)
+//(MaxBandCovSize 192)
+//(SigmoidInitialTime 0 0 0)
+//(SigmoidScaleFactor 0.1)
+
+
+// ********** Several
+
+(WriteTransformParametersEachIteration "false")
+(WriteTransformParametersEachResolution "false")
+(WriteResultImageAfterEachResolution "false")
+(WritePyramidImagesAfterEachResolution "false")
+(ShowExactMetricValue "false")
+(ErodeFixedMask "false" "false")
+(ErodeMovingMask "false" "false")
+(UseDirectionCosines "true")
+(FixedLimitRangeRatio 0.01 0.01)
+(MovingLimitRangeRatio 0.01 0.01)
+(UseFastAndLowMemoryVersion "true")
+//(SP_A 20.0 )
+
+
+// ********** ImageSampler
+
+//Number of spatial samples used to compute the mutual information in each resolution level:
+(ImageSampler "RandomCoordinate")
+//(ImageSampler "Full")
+(CheckNumberOfSamples "false" "false" "false")
+(NumberOfSpatialSamples 2048 4096 4096)
+//(NumberOfSpatialSamples 8096 16384 16384)
+
+(NumberOfSamplesForSelfHessian 10000)
+(NumberOfSamplesForExactGradient 10000)
+(NewSamplesEveryIteration "true")
+(UseRandomSampleRegion "false")
+(MaximumNumberOfSamplingAttempts 0 0 0)
+
+
+// ********** Interpolator and Resampler
+
+//Order of B-Spline interpolation used in each resolution level:
+(BSplineInterpolationOrder 1 1 1)
+(FixedImageBSplineInterpolationOrder 1 1 1)
+(MovingImageBSplineInterpolationOrder 1 1 1)
+(FixedKernelBSplineOrder 3 3 3) // 0 for binary
+(MovingKernelBSplineOrder 3 3 3)
+
+//Order of B-Spline interpolation used for applying the final deformation:
+(FinalBSplineInterpolationOrder 3)
+
+//Default pixel value for pixels that come from outside the picture:
+(DefaultPixelValue 0)
+
+(WriteResultImage "false")
+(CompressResultImage "false")
+
+// The pixel type and format of the resulting deformed moving image
+(ResultImagePixelType "float")
+(ResultImageFormat "mhd")
 """

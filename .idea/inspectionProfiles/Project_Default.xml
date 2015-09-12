@@ -17,6 +17,7 @@
           <option value="registration.sitk" />
           <option value="helpers2.sitk" />
           <option value="prediction.sitk" />
+          <option value="objects.n" />
         </list>
       </option>
     </inspection_tool>

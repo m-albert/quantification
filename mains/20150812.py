@@ -7,9 +7,12 @@ from dependencies import *
 
 # reference = sitk.ReadImage('/data/malbert/atlas/references/45dpf_af_gfp/stack1.tif')
 reference = sitk.ReadImage('/data/malbert/atlas/references/50dpf_af_gfp/20150812/output/stack1.tif')
+mask = sitk.ReadImage('/data/malbert/atlas/references/50dpf_af_gfp/20150812/output/reference_scaled448_mask.tif')
+mask.SetSpacing([4,4,8])
+mask = sitk.Resample(mask,reference)
 # reference.SetSpacing([4,4,2./0.55])
-# samples = [1,2,5,6,7,8,9,10,11] # samples 0812 5dpf
-samples = [1,2,5,6,7] # samples 0812 5dpf
+samples = [1,2,5,6,7,8,9,10,11] # samples 0812 5dpf
+# samples = [1,2,5,6,7] # samples 0812 5dpf
 # samples = [8,9,10,11] # samples 0812 5dpf
 
 bs = []
@@ -26,6 +29,7 @@ for isample,sample in enumerate(samples):
     registration.Transformation(b,b.p2y12,b.interreg,'interaligned',redo=False)
     registration.Transformation(b,b.p2y12,b.intrareg,'intraaligned',redo=False)
 
-    prediction.FilterSegmentation(b,b.interaligned,'seg')
+    prediction.FilterSegmentation(b,b.interaligned,'seg',redo=False)
+    prediction.MaskedSegmentation(b,b.seg,mask,'ms',redo=False)
 
     bs.append(b)

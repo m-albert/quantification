@@ -37,7 +37,7 @@ sitk.gafi = sitk.GetArrayFromImage
 
 import h5py
 import numpy as n
-from scipy import ndimage
+from scipy import ndimage,spatial
 
 import misc
 import brain
@@ -47,6 +47,7 @@ import prediction
 import segmentation
 import tracking
 import activity
+import objects
 
 # import objects
 # import microglia

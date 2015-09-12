@@ -147,3 +147,61 @@ class FilterSegmentation(descriptors.ChannelData):
                                     hierarchy=self.nickname)
 
         return outDict
+
+
+class MaskedSegmentation(descriptors.ChannelData):
+
+    def __init__(self,parent,baseData,mask,nickname,*args,**kargs):
+        print 'creating mask of %s' %(baseData.nickname)
+
+        self.baseData = baseData
+        self.mask = mask
+        # self.mask = sitk.gafi(mask)
+        # tmp = n.array(self.mask.nonzero())
+        # self.maskMin = n.min(tmp,1)
+        # self.maskMax = n.max(tmp,1)
+        # self.slices = tuple([slice(self.maskMin[i],self.maskMax[i]) for i in range(3)])
+
+        self.dir = self.baseData.dir
+        self.fileNameFormat = self.baseData.fileNameFormat
+
+        super(MaskedSegmentation,self).__init__(parent,nickname,*args,**kargs)
+
+        self.timepointClass = descriptors.H5Array
+
+
+    def prepareTimepoints(self,times,redo):
+
+        outDict = dict()
+
+        alreadyDoneTimes, toDoTimes = [],[]
+        for itime,time in enumerate(times):
+            tmpFile = h5py.File(self.baseData.getFileName(time))
+            if self.nickname in tmpFile.keys():
+                if redo:
+                    del tmpFile[self.nickname]
+                    toDoTimes.append(time)
+                else:
+                    alreadyDoneTimes.append(time)
+                    outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.nickname)
+            else:
+                toDoTimes.append(time)
+            #tmpGroup.file.close()
+            tmpFile.close()
+
+        print 'already prepared: %s\nto prepare: %s\n' %(alreadyDoneTimes,toDoTimes)
+
+        if not len(toDoTimes): return outDict
+
+        for itime,time in enumerate(toDoTimes):
+
+            tmpRes = self.baseData[time][self.mask.slices]*self.mask.data[self.slices]
+
+            tmpFile = h5py.File(self.baseData[time].file.filename)
+            tmpFile[self.nickname] = tmpRes
+            tmpFile.close()
+
+            outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
+                                    hierarchy=self.nickname)
+
+        return outDict

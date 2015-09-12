@@ -11,8 +11,13 @@ class Brain(object):
                  channels = [],
                  times = [],
                  registrationSliceStringSitk = None,
+                 spacing = None
                  ):
 
+        if spacing is None:
+            self.spacing = n.array([1,1,1.])
+        else:
+            self.spacing = spacing
         self.datashape = None
         self.dimt = dimt
         self.dimc = dimc
