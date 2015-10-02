@@ -26,11 +26,12 @@ class Prediction(descriptors.ChannelData):
 
         self.fileNameFormat = config['predictionFileNameFormat']
         self.baseData = baseData
-        self.timepointClass = descriptors.H5Array
+        self.timepointClass = h5py.Dataset
+        self.hierarchy = nickname
 
-        self.dir = self.baseData.dir
+        # self.dir = self.baseData.dir
 
-        self.trainingSamplesDir = os.path.join(self.dir,'training')
+        self.trainingSamplesDir = os.path.join(self.dataDir,'training')
         if not os.path.exists(self.trainingSamplesDir): os.mkdir(self.trainingSamplesDir)
 
 
@@ -70,7 +71,7 @@ class Prediction(descriptors.ChannelData):
         for itime,time in enumerate(times):
             if os.path.exists(self.getFileName(time)):
                 alreadyDoneTimes.append(time)
-                outDict[time] = descriptors.H5Array(self.getFileName(time))
+                # outDict[time] = descriptors.H5Array(self.getFileName(time))
             else:
                 toDoTimes.append(time)
                 toDoStacks.append(self.baseData[time])
@@ -78,12 +79,12 @@ class Prediction(descriptors.ChannelData):
         if not len(toDoTimes): return outDict
 
         # pdb.set_trace()
-        outFiles = config['ilastikCommand'](toDoStacks,self.classifier,outLabelIndex=1,outDir=self.dir)
+        outFiles = config['ilastikCommand'](toDoStacks,self.classifier,outLabelIndex=1,outDir=self.parent.dataDir)
 
         for ifile,f in enumerate(outFiles):
-            tmpOutFileName = os.path.join(self.dir,outFiles[ifile].file.filename)
+            tmpOutFileName = os.path.join(self.parent.dataDir,outFiles[ifile].file.filename)
             outFiles[ifile].file.close()
-            outDict[toDoTimes[ifile]] = descriptors.H5Array(tmpOutFileName)
+            # outDict[toDoTimes[ifile]] = descriptors.H5Array(tmpOutFileName)
 
         return outDict
 
@@ -95,13 +96,13 @@ class FilterSegmentation(descriptors.ChannelData):
         print 'creating filter segmentation of %s' %(baseData.nickname)
 
         self.baseData = baseData
-
-        self.dir = self.baseData.dir
-        self.fileNameFormat = self.baseData.fileNameFormat
+        self.hierarchy = nickname
+        # self.dir = self.baseData.dir
+        # self.fileNameFormat = self.baseData.fileNameFormat
 
         super(FilterSegmentation,self).__init__(parent,nickname,*args,**kargs)
 
-        self.timepointClass = descriptors.H5Array
+        self.timepointClass = h5py.Dataset
 
 
     def prepareTimepoints(self,times,redo):
@@ -110,18 +111,20 @@ class FilterSegmentation(descriptors.ChannelData):
 
         alreadyDoneTimes, toDoTimes = [],[]
         for itime,time in enumerate(times):
-            tmpFile = h5py.File(self.baseData.getFileName(time))
+            # tmpFile = h5py.File(self.baseData.getFileName(time))
+            tmpFile = self.parent[time]
             if self.nickname in tmpFile.keys():
                 if redo:
                     del tmpFile[self.nickname]
                     toDoTimes.append(time)
                 else:
                     alreadyDoneTimes.append(time)
-                    outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.nickname)
+                    # outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.nickname)
+                    outDict[time] = True
             else:
                 toDoTimes.append(time)
             #tmpGroup.file.close()
-            tmpFile.close()
+            # tmpFile.close()
 
         print 'already prepared: %s\nto prepare: %s\n' %(alreadyDoneTimes,toDoTimes)
 
@@ -139,12 +142,18 @@ class FilterSegmentation(descriptors.ChannelData):
             tmpRes,N = ndimage.label(tmpRes)
             tmpRes = imaging.mySizeFilter(tmpRes,5000,1000000000000)
 
-            tmpFile = h5py.File(self.baseData[time].file.filename)
-            tmpFile[self.nickname] = tmpRes
-            tmpFile.close()
+            # filing.toH5(tmpRes.astype(n.uint16),self.baseData[time].file.filename,hierarchy=self.nickname,
+            #             compression='jls',compressionOption=0)
+            filing.toH5_hl(tmpRes.astype(n.uint16),self.parent[time],hierarchy=self.hierarchy,
+                        compression='jls',compressionOption=0)
 
-            outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
-                                    hierarchy=self.nickname)
+            # tmpFile = h5py.File(self.baseData[time].file.filename)
+            # tmpFile[self.nickname] = tmpRes
+            # tmpFile.close()
+
+            # outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
+            #                         hierarchy=self.nickname)
+            outDict[time] = True
 
         return outDict
 
@@ -156,18 +165,19 @@ class MaskedSegmentation(descriptors.ChannelData):
 
         self.baseData = baseData
         self.mask = mask
+        self.hierarchy = nickname
         # self.mask = sitk.gafi(mask)
         # tmp = n.array(self.mask.nonzero())
         # self.maskMin = n.min(tmp,1)
         # self.maskMax = n.max(tmp,1)
         # self.slices = tuple([slice(self.maskMin[i],self.maskMax[i]) for i in range(3)])
 
-        self.dir = self.baseData.dir
-        self.fileNameFormat = self.baseData.fileNameFormat
+        # self.dir = self.baseData.dir
+        self.fileNameFormat = parent.fileNameFormat
 
         super(MaskedSegmentation,self).__init__(parent,nickname,*args,**kargs)
 
-        self.timepointClass = descriptors.H5Array
+        self.timepointClass = h5py.Dataset
 
 
     def prepareTimepoints(self,times,redo):
@@ -176,18 +186,20 @@ class MaskedSegmentation(descriptors.ChannelData):
 
         alreadyDoneTimes, toDoTimes = [],[]
         for itime,time in enumerate(times):
-            tmpFile = h5py.File(self.baseData.getFileName(time))
+            # tmpFile = h5py.File(self.baseData.getFileName(time))
+            tmpFile = self.parent[time]
             if self.nickname in tmpFile.keys():
                 if redo:
                     del tmpFile[self.nickname]
                     toDoTimes.append(time)
                 else:
                     alreadyDoneTimes.append(time)
-                    outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.nickname)
+                    # outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.nickname)
+                    outDict[time] = True
             else:
                 toDoTimes.append(time)
             #tmpGroup.file.close()
-            tmpFile.close()
+            # tmpFile.close()
 
         print 'already prepared: %s\nto prepare: %s\n' %(alreadyDoneTimes,toDoTimes)
 
@@ -195,13 +207,19 @@ class MaskedSegmentation(descriptors.ChannelData):
 
         for itime,time in enumerate(toDoTimes):
 
-            tmpRes = self.baseData[time][self.mask.slices]*self.mask.data[self.slices]
+            tmpRes = self.baseData[time][self.mask.slices]*self.mask.ga()[self.mask.slices]
 
-            tmpFile = h5py.File(self.baseData[time].file.filename)
-            tmpFile[self.nickname] = tmpRes
-            tmpFile.close()
+            # filing.toH5(tmpRes.astype(n.uint16),self.baseData[time].file.filename,hierarchy=self.nickname,
+            #             compression='jls',compressionOption=0)
+            filing.toH5_hl(tmpRes.astype(n.uint16),self.parent[time],hierarchy=self.hierarchy,
+                        compression='jls',compressionOption=0)
 
-            outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
-                                    hierarchy=self.nickname)
+            # tmpFile = h5py.File(self.baseData[time].file.filename)
+            # tmpFile[self.nickname] = tmpRes
+            # tmpFile.close()
+
+            # outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
+            #                         hierarchy=self.nickname)
+            outDict[time] = True
 
         return outDict

@@ -14,55 +14,69 @@ class RegistrationParameters(descriptors.ChannelData):
                  mode = 'intra',
                  reference = 0,
                  initialRegistration=None,
+                 initialOrientation=None,
                  *args,**kargs):
 
         print 'creating registration channel with nickname %s' %nickname
 
         self.baseData = baseData
+        self.hierarchy = nickname
 
-        self.dir = self.baseData.dir
-        self.fileNameFormat = self.baseData.fileNameFormat
+        # self.dir = self.baseData.dir
+        self.fileNameFormat = parent.fileNameFormat
 
         self.validTimes = range(parent.dimt)
 
         self.reference = reference
         self.initialRegistration = initialRegistration
+        if initialOrientation is None:
+            self.initialOrientation = n.array([1.,0,0,0,1,0,0,0,1,0,0,0])
+        else:
+            self.initialOrientation = initialOrientation
         self.mode = mode
 
         self.relShape = None
 
         super(RegistrationParameters,self).__init__(parent,nickname,*args,**kargs)
 
-        self.timepointClass = descriptors.H5Array
+        self.timepointClass = h5py.Dataset
 
 
     def prepareTimepoints(self,times,redo):
 
         outDict = dict()
+
         if self.mode == 'inter':
             if type(self.reference) == sitk.Image:
                 self.relShape = n.array(self.reference.GetSize())
             elif type(self.reference) == n.array:
                 self.relShape = n.array(self.reference.shape)[::-1]
+            elif type(self.reference) == descriptors.Image:
+                self.relShape = self.reference.shape
+            else:
+                raise(Exception('reference?'))
         elif self.mode == 'intra':
             self.relShape = n.array(self.baseData[self.reference].shape)[::-1]
 
         alreadyDoneTimes, toDoTimes = [],[]
         for itime,time in enumerate(times):
-            tmpFile = h5py.File(self.baseData.getFileName(time))
-            if self.nickname in tmpFile.keys():
+            # tmpFile = h5py.File(self.baseData.getFileName(time))
+            tmpFile = self.parent[time]
+            if self.hierarchy in tmpFile.keys():
                 if redo:
-                    del tmpFile[self.nickname]
+                    del tmpFile[self.hierarchy]
                     toDoTimes.append(time)
                 else:
                     alreadyDoneTimes.append(time)
-                    outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.nickname)
+                    # outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.nickname)
+                    outDict[time] = True
                     if self.mode == 'inter' and not time:
                     # if self.singleRegistrationTime is None or self.singleRegistrationTime == time:
-                        self.relParams = outDict[time].__get__(outDict[time],outDict[time])
+                    #     self.relParams = outDict[time].__get__(outDict[time],outDict[time])
+                        self.relParams = n.array(self.parent[time][self.hierarchy])
             else:
                 toDoTimes.append(time)
-            tmpFile.close()
+            # tmpFile.close()
 
             # self.baseData.close(time)
 
@@ -75,6 +89,8 @@ class RegistrationParameters(descriptors.ChannelData):
             self.reference = self.reference.gi()
         if type(self.reference) == int:
             tmpImage = sitk.gifa(self.baseData[self.parent.times[self.reference]])
+            tmpImage.SetSpacing(self.baseData.spacing)
+            tmpImage.SetOrigin(self.baseData.origin)
         elif type(self.reference) == sitk.Image:
             tmpImage = self.reference
         elif type(self.reference) == n.array:
@@ -113,12 +129,17 @@ class RegistrationParameters(descriptors.ChannelData):
                 else:
                     # if self.relShape is None: self.relShape == self.baseData[0].shape[::-1]
                     tmpImage = sitk.gifa(self.baseData[time])
+                    tmpImage.SetSpacing(self.spacing)
+                    tmpImage.SetOrigin(self.origin)
+
                     if not (self.parent.registrationSliceStringSitk is None):
                         exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
 
                     closestTime = alreadyDoneTimes[n.argmin(n.abs(n.array(alreadyDoneTimes)-time))]
-                    tmpObject = outDict[closestTime]
-                    tmpInitialParams = [[1.,0,0,0,1,0,0,0,1,0,0,0],tmpObject.__get__(tmpObject,tmpObject)]
+                    # tmpObject = outDict[closestTime]
+                    tmpObject = n.array(self.parent[closestTime][self.hierarchy])
+                    # tmpInitialParams = [[1.,0,0,0,1,0,0,0,1,0,0,0],tmpObject.__get__(tmpObject,tmpObject)]
+                    tmpInitialParams = [[1.,0,0,0,1,0,0,0,1,0,0,0],tmpObject]
                     print 'taking tp %s as initial (intra) parameters for tp %s' %(closestTime,time)
 
                     inputList = [outFileRef,tmpImage]
@@ -135,11 +156,19 @@ class RegistrationParameters(descriptors.ChannelData):
                     # if self.relShape is None: self.relShape == n.array(tmpImage.GetSize())
 
                     tmpImage = sitk.gifa(self.baseData[time])
+                    tmpImage.SetSpacing(self.spacing)
+                    tmpImage.SetOrigin(self.origin)
+
                     if not (self.parent.registrationSliceStringSitk is None):
                         exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
 
-                    if initialParams is None: tmpInitialParams = None
-                    else: tmpInitialParams = [[1.,0,0,0,1,0,0,0,1,0,0,0],initialParams]
+                    if initialParams is None:
+                        initialParams = [1.,0,0,0,1,0,0,0,1,0,0,0]
+                    if self.initialOrientation is not None:
+                        initialParams = composeAffineTransformations([initialParams,self.initialOrientation])
+                    tmpInitialParams = [[1.,0,0,0,1,0,0,0,1,0,0,0],initialParams]
+
+                    # pdb.set_trace()
 
                     inputList = [outFileRef,tmpImage]
                     mode = 'similarity'
@@ -157,14 +186,19 @@ class RegistrationParameters(descriptors.ChannelData):
                         tmpParams = composeAffineTransformations([initialParams,self.relParams])
 
 
-            tmpFile = h5py.File(self.baseData[time].file.filename)
-            tmpFile[self.nickname] = tmpParams
-            tmpFile.close()
+            # tmpFile = h5py.File(self.baseData[time].file.filename)
+            tmpFile = self.parent[time]
 
-            outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),hierarchy=self.nickname)
+            filing.toH5_hl(tmpParams,tmpFile,hierarchy=self.hierarchy)
+
+            # tmpFile[self.nickname] = tmpParams
+            # tmpFile.close()
+
+            # outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),hierarchy=self.nickname)
+            outDict[time] = True
             alreadyDoneTimes.append(time)
 
-            self.baseData.close(time)
+            # self.baseData.close(time)
 
         os.remove(outFileRef)
         os.remove(outFileRefRaw)
@@ -173,7 +207,7 @@ class RegistrationParameters(descriptors.ChannelData):
 
 class Transformation(descriptors.ChannelData):
 
-    def __init__(self,parent,baseData,paramsData,nickname,mask=None,filterTimes=None,offset=None,*args,**kargs):
+    def __init__(self,parent,baseData,paramsData,nickname,interpolation=sitk.sitkLinear,mask=None,filterTimes=None,offset=None,*args,**kargs):
         print 'creating transformation channel of %s using %s and mask %s' %(baseData.nickname,paramsData.nickname,mask)
 
         self.baseData = baseData
@@ -181,6 +215,9 @@ class Transformation(descriptors.ChannelData):
         self.mask = mask
         self.filterTimes = filterTimes
         self.offset = offset
+        self.hierarchy = nickname
+        self.interpolation = interpolation
+
 
         if not (filterTimes is None):
             params = n.array([self.paramsData[itime] for itime in range(parent.dimt)])
@@ -192,12 +229,13 @@ class Transformation(descriptors.ChannelData):
         else:
             self.validTimes = parent.times
 
-        self.dir = self.baseData.dir
-        self.fileNameFormat = self.baseData.fileNameFormat
+        # self.dir = self.baseData.dir
+        self.fileNameFormat = parent.fileNameFormat
 
         super(Transformation,self).__init__(parent,nickname,*args,**kargs)
 
-        self.timepointClass = descriptors.H5Array
+        # self.timepointClass = descriptors.H5Array
+        self.timepointClass = h5py.Dataset
 
 
     def prepareTimepoints(self,times,redo):
@@ -206,18 +244,20 @@ class Transformation(descriptors.ChannelData):
 
         alreadyDoneTimes, toDoTimes = [],[]
         for itime,time in enumerate(times):
-            tmpFile = h5py.File(self.baseData.getFileName(time))
-            if self.nickname in tmpFile.keys():
+            # tmpFile = h5py.File(self.baseData.getFileName(time))
+            tmpFile = self.parent[time]
+            if self.hierarchy in tmpFile.keys():
                 if redo:
-                    del tmpFile[self.nickname]
+                    del tmpFile[self.hierarchy]
                     toDoTimes.append(time)
                 else:
                     alreadyDoneTimes.append(time)
-                    outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.nickname)
+                    # outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.nickname)
+                    outDict[time] = True
             else:
                 toDoTimes.append(time)
             #tmpGroup.file.close()
-            tmpFile.close()
+            # tmpFile.close()
 
         print 'already prepared: %s\nto prepare: %s\n' %(alreadyDoneTimes,toDoTimes)
 
@@ -225,50 +265,64 @@ class Transformation(descriptors.ChannelData):
 
         if type(self.paramsData.reference) == int:
             refIm = sitk.gifa(self.baseData[0])
+            refIm.SetSpacing(self.baseData.spacing)
+            refIm.SetOrigin(self.baseData.origin)
         elif type(self.paramsData.reference) == descriptors.Image:
             refIm = self.paramsData.reference.gi()
         else: refIm = self.paramsData.reference
-
-        if not (self.mask is None):
-            mask = sitk.Cast(self.mask,refIm.GetPixelID())
 
         for itime,time in enumerate(toDoTimes):
             print "transforming basedata %s with params %s, time %06d" %(self.baseData.nickname,self.paramsData.nickname,time)
 
             tmpIm = sitk.gifa(self.baseData[time])
+            tmpIm.SetSpacing(self.baseData.spacing)
+            tmpIm.SetOrigin(self.baseData.origin)
+
             tmpParams = n.array(self.paramsData[time])
             # pdb.set_trace()
             changedParams = n.zeros(12)
             changedParams[:] = tmpParams
             if not (self.offset is None):
                 changedParams[9:] += self.offset
-            tmpRes = transformStackAndRef(changedParams,tmpIm,refIm)
+            tmpRes = transformStackAndRef(changedParams,tmpIm,refIm,interpolation=self.interpolation)
 
-            if not (self.mask is None):
-                tmpRes = tmpRes*mask
+            # if not (self.mask is None):
+            #     tmpRes = tmpRes*mask
+
+            # pdb.set_trace()
 
             tmpRes = tmpRes[0:self.paramsData.relShape[0],0:self.paramsData.relShape[1],0:self.paramsData.relShape[2]]
-            tmpRes.SetSpacing((1,1,1.))
-            tmpRes.SetOrigin((0,0,0.))
+            # tmpRes.SetSpacing((1,1,1.))
+            # tmpRes.SetOrigin((0,0,0.))
             tmpRes = sitk.gafi(tmpRes)
 
-            tmpFile = h5py.File(self.baseData[time].file.filename)
-            tmpFile[self.nickname] = tmpRes
-            tmpFile.close()
+            # pdb.set_trace()
+            if not (self.mask is None):
+                tmpRes = (tmpRes[self.mask.slices]*self.mask.ga()[self.mask.slices]).astype(tmpRes.dtype)
 
-            outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
-                                    hierarchy=self.nickname)
+            # tmpFile = h5py.File(self.baseData[time].file.filename)
+            tmpFile = self.parent[time]
+
+            filing.toH5_hl(tmpRes,tmpFile,hierarchy=self.hierarchy,
+                           compression=self.compression,compressionOption=self.compressionOption)
+
+            # tmpFile[self.nickname] = tmpRes
+            # tmpFile.close()
+
+            # outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
+            #                         hierarchy=self.nickname)
+            outDict[time] = True
 
         return outDict
 
-def transformStackAndRef(p,stack,refStack):
+def transformStackAndRef(p,stack,refStack,interpolation=sitk.sitkLinear):
     # can handle composite transformations (len(p)%12)
-    newim = transformStack(p,stack)
+    newim = transformStack(p,stack,interpolation=interpolation)
     if not (refStack is None):
         newim = sitk.Resample(newim,refStack)
     return newim
 
-def transformStack(p,stack,outShape=None,outSpacing=None,outOrigin=None):
+def transformStack(p,stack,outShape=None,outSpacing=None,outOrigin=None,interpolation=sitk.sitkLinear):
     # can handle composite transformations (len(p)%12)
     # 20140326: added outOrigin option
 
@@ -293,7 +347,7 @@ def transformStack(p,stack,outShape=None,outSpacing=None,outOrigin=None):
     else: outOrigin = n.array(outOrigin)
     print stack.GetSize(),shape
     # pdb.set_trace()
-    newim = sitk.Resample(stack,shape,transf,sitk.sitkLinear,outOrigin,outSpacing)
+    newim = sitk.Resample(stack,shape,transf,interpolation,outOrigin,outSpacing)
     if numpyarray:
         newim = sitk.GetArrayFromImage(newim)
     return newim
@@ -409,7 +463,10 @@ def getParamsFromElastix(images,initialParams=None,
         paramDict = dict()
 
         paramDict['el'] = elastixPath
-        parameterPaths = [os.path.join(tmpDir,'elastixParameters%s.txt' %i) for i in range(len(mode))]
+        if type(mode) == list:
+            parameterPaths = [os.path.join(tmpDir,'elastixParameters%s.txt' %i) for i in range(len(mode))]
+        else:
+            parameterPaths = [os.path.join(tmpDir,'elastixParameters%s.txt' %0)]
         initialTransformPath = os.path.join(tmpDir,'elastixInitialTransform.txt')
         paramDict['out'] = tmpDir
         createInitialTransformFile(n.array([1,1,1.]),params[iim],elastixInitialTransformTemplateString,initialTransformPath)
@@ -431,7 +488,7 @@ def getParamsFromElastix(images,initialParams=None,
             # if not (initialParams is None): raise(Exception('no initial transformation plus composition supported'))
             parameterTemplateStrings = [getString(s) for s in mode]
         else:
-            parameterTemplateStrings = getString(mode)
+            parameterTemplateStrings = [getString(mode)]
 
         # write parameter files
         # if not type(mode) == list:
@@ -453,7 +510,7 @@ def getParamsFromElastix(images,initialParams=None,
         for s in parameterPaths:
             cmd += ' -p %s' %s
         if not type(mode) == list:
-            cmd += ' -t0 %(initialTransform)s'
+            cmd += ' -t0 %(initialTransform)s' %paramDict
         cmd += ' -out %(out)s' %paramDict
         cmd = cmd.split(' ')
 

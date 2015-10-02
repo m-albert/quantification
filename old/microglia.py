@@ -117,12 +117,7 @@ def getSkeletonNodes(ms):
         tmpIndices = convIndices + tmpCoord.reshape((3,1))
         nodeValues[icoord] = (n.sum(tmp[tuple(tmpIndices)])-1)
 
-
-    #tmp = ndimage.convolve(tmp,n.ones((3,3,3)))
-    #tmp = ndimage.generic_filter(tmp,isNode,footprint=n.ones((3,3,3)),mode='constant')
-    #nodes = (tmp>2)+(tmp==1)
-    #coordValues = (tmp>2)*1.1+(tmp==1)*2+(tmp==2)*1.1
     ms.nodeValues = nodeValues
     validNodeValues = [1,3,4,5,6,7]
-    ms.skeletonNodes = tuple(coords[:,n.min([n.abs(nodeValues-validNodeValues[i]) for i in range(len(validNodeValues))],0)==0])
-    return
+    skeletonNodes = coords[:,n.min([n.abs(nodeValues-validNodeValues[i]) for i in range(len(validNodeValues))],0)==0]
+    return skeletonNodes

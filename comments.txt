@@ -2,4 +2,4 @@ TODO:
 - init brain method to get dataset properties like dimt,spacing
 - nickname to datasets
 
-- 10,36
+- 11,37

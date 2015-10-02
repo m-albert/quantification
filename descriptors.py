@@ -4,10 +4,9 @@ from dependencies import *
 
 import shutil
 
-config['relRawDataDir'] = "raw_ch%d"
+config['relRawDataDir'] = "all%d"
 # config['relRawDataDir'] = "Stack_2_Channel_%d"
 
-config['fileNameFormat'] = "f%06d.h5"
 # config['fileNameFormat'] = "Cam_Right_%05d.h5"
 
 config['rawHierarchy'] = 'DS1'
@@ -19,14 +18,29 @@ config['unstructuredDataDir'] = "unstructured"
 # def H5Array(filename):
 #     return h5py.File(filename)[config['hierarchy']]
 
-class H5Pointer(object):
+class DelayedKeyboardInterrupt(object):
+    def __enter__(self):
+        self.signal_received = False
+        self.old_handler = signal.getsignal(signal.SIGINT)
+        signal.signal(signal.SIGINT, self.handler)
 
-    def __init__(self,fileName,hierarchy):
-        self.fileName = fileName
-        self.hierarchy = hierarchy
+    def handler(self, signal, frame):
+        self.signal_received = (signal, frame)
+        logging.debug('SIGINT received. Delaying KeyboardInterrupt.')
 
-    def __get__(self,instance,owner):
-        return h5py.File(self.fileName)[self.hierarchy]
+    def __exit__(self, type, value, traceback):
+        signal.signal(signal.SIGINT, self.old_handler)
+        if self.signal_received:
+            self.old_handler(*self.signal_received)
+
+# class H5Pointer(object):
+#
+#     def __init__(self,fileName,hierarchy):
+#         self.fileName = fileName
+#         self.hierarchy = hierarchy
+#
+#     def __get__(self,instance,owner):
+#         return h5py.File(self.fileName)[self.hierarchy]
 
 # class H5Pointer(object):
 #
@@ -71,96 +85,177 @@ class H5Pointer(object):
 
 
 
-class H5Array(object):
+# class H5Array(object):
+#
+#     # replace by simple h5py.File?
+#
+#     def __init__(self,filename,hierarchy=config['rawHierarchy']):
+#         print 'instanciating stack for file %s' %filename
+#         self.filename = filename
+#         self.hierarchy = hierarchy
+#         self.file = None
+#         self.dataset = None
+#         return
+#
+#     def __get__(self,instance,owner):
+#         # open file only if needed
+#
+#         if self.file is None:
+#             print 'opening file %s' %self.filename
+#             self.file = h5py.File(self.filename)
+#             if not self.hierarchy in self.file.keys(): raise(Exception('could not find dataset with name %s in file %s' %(self.hierarchy,self.filename)))
+#             self.dataset = self.file[self.hierarchy]
+#
+#         if len(self.dataset.shape) < 2:
+#             returnData = n.array(self.dataset)
+#             self.close()
+#             return returnData
+#         else:
+#             return self.dataset
+#
+#     def __set__(self,value):
+#         raise(Exception('no setting possible!'))
+#
+#     def __del__(self):
+#         print 'closing file %s' %self.filename
+#         self.close()
+#         return
+#
+#     def close(self):
+#         self.dataset = None
+#         if not self.file is None:
+#             self.file.close()
+#             self.file = None
+#         return
+#
+#     def __getitem__(self,item):
+#         raise(Exception('shouldnt this go over the getitem of the parent?'))
+#         # return self.__get__(self,H5Array)[item]
+#         return
 
-    # replace by simple h5py.File?
+class ToLoad(object):
+    def __init__(self, var, func):
+        self.var  = var
+        self.func = func
 
-    def __init__(self,filename,hierarchy=config['rawHierarchy']):
-        print 'instanciating stack for file %s' %filename
-        self.filename = filename
-        self.hierarchy = hierarchy
-        self.file = None
-        self.dataset = None
-        return
-
-    def __get__(self,instance,owner):
-        # open file only if needed
-
-        if self.file is None:
-            print 'opening file %s' %self.filename
-            self.file = h5py.File(self.filename)
-            if not self.hierarchy in self.file.keys(): raise(Exception('could not find dataset with name %s in file %s' %(self.hierarchy,self.filename)))
-            self.dataset = self.file[self.hierarchy]
-
-        if len(self.dataset.shape) < 2:
-            returnData = n.array(self.dataset)
-            self.close()
-            return returnData
-        else:
-            return self.dataset
-
-    def __set__(self,value):
-        raise(Exception('no setting possible!'))
-
-    def __del__(self):
-        print 'closing file %s' %self.filename
-        self.close()
-        return
-
-    def close(self):
-        self.dataset = None
-        if not self.file is None:
-            self.file.close()
-            self.file = None
-        return
-
-    def __getitem__(self,item):
-        raise(Exception('shouldnt this go over the getitem of the parent?'))
-        return self.__get__(self,H5Array)[item]
-
+    # style note: try to avoid overshadowing built-ins (e.g. type)
+    def __get__(self, obj, cls):
+            internal = getattr(obj, '_'+self.var)
+            if internal is None:
+                value = getattr(obj, self.func)()
+                setattr(obj, '_'+self.var, value)
+                return value
+            else:
+                return internal
 
 class Image(object):
 
+    image = ToLoad('image', '_load_image')
+    shape = ToLoad('shape', '_load_shape')
+    origin = ToLoad('origin', '_load_origin')
+    spacing = ToLoad('origin', '_load_spacing')
+    minCoord = ToLoad('minCoord', '_load_minCoord')
+    maxCoord = ToLoad('maxCoord', '_load_maxCoord')
+    slices = ToLoad('slices', '_load_slices')
+
     def __init__(self,fileName,spacing=None,shape=None,origin=None):
+
+        # image meta data does not get set from sitk.ReadImage!
+
         self.fileName = fileName
-        self.data = None
-        self.spacing = spacing
-        self.shape = shape
-        self.origin = origin
-        self.min = None
-        self.max = None
-        self.slices = None
+
+        self._spacing = spacing
+        self._shape = shape
+        self._origin = origin
+
+        self._image = None
+        self._minCoord = None
+        self._maxCoord = None
+        self._slices = None
         return
 
     def gi(self):
-        tmpIm = self.gifa(self.data)
-        tmpIm.SetSpacing(self.spacing)
-        tmpIm.SetOrigin(self.origin)
-        return tmpIm
+        self.image.SetSpacing(self.spacing)
+        self.image.SetOrigin(self.origin)
+        return self.image
 
     def ga(self):
+        return sitk.gafi(self.image)
         pass
 
-    def __getattribute__(self,name):
-        if not self.__dict__.has_key(name):
-            raise(AttributeError)
+    def GetSize(self):
+        return self.shape[::-1]
+
+    def _load_image(self):
+        return sitk.ReadImage(self.fileName)
+
+    def _load_spacing(self):
+        if self._spacing == None:
+            return n.array(self.image.GetSpacing())
         else:
-            if self.data is None:
-                print 'loading Image: %s' %self.fileName
-                tmpImage = sitk.ReadImage(self.fileName)
-                self.data = sitk.gafi(tmpImage)
-                self.shape = n.array(self.data.GetSize())
-                self.origin = n.array(self.data.GetOrigin())
-                self.spacing = n.array(self.data.GetSpacing())
+            return self._spacing
 
-            if name in ['slices','minCoord','maxCoord'] and self.__dict__[name] is None:
-                tmp = n.array(self.data.nonzero())
-                self.minCoord = n.min(tmp,1)
-                self.maxCoord = n.max(tmp,1)
-                self.slices = tuple([slice(self.minCoord[i],self.maxCoord[i]) for i in range(3)])
+    def _load_shape(self):
+        if self._shape is None:
+            return n.array(self.image.GetSize())
+        else:
+            return self._shape
 
-        return self.__dict__[name]
+    def _load_origin(self):
+        if self._origin is None:
+            return n.array(self.image.GetOrigin())
+        else:
+            return self._origin
 
+    def _loadMaskStuff(self):
+        tmp = self.ga().nonzero()
+        self.minCoord = n.min(tmp,1)
+        self.maxCoord = n.max(tmp,1)
+        self.slices = tuple([slice(self.minCoord[i],self.maxCoord[i]) for i in range(3)])
+        return
+
+    def _load_minCoord(self):
+        self._loadMaskStuff()
+        return self.minCoord
+
+    def _load_maxCoord(self):
+        self._loadMaskStuff()
+        return self.maxCoord
+
+    def _load_slices(self):
+        self._loadMaskStuff()
+        return self.slices
+
+    def __getattr__(self,name):
+        try:
+            res = getattr(self.ga(),name)
+            return res
+        except:
+            raise(Exception('couldnt get attribute %s from numpy array' %name))
+            return
+
+    # def __getattribute__(self,name):
+    #     pdb.set_trace()
+    #     if name == 'i': return object.__getattribute__(self,'gi')()
+    #     if name == 'a': return object.__getattribute__(self,'ga')()
+    #     if not object.__getattribute__(self,'__dict__').has_key(name):
+    #         raise(AttributeError)
+    #     else:
+    #         if not object.__getattribute__(self,'data') is None:
+    #             print 'loading Image: %s' %object.__getattribute__(self,'fileName')
+    #             tmpImage = sitk.ReadImage(object.__getattribute__(self,'fileName'))
+    #             self.data = sitk.gafi(tmpImage)
+    #             self.shape = n.array(object.__getattribute__(self,'data').GetSize())
+    #             self.origin = n.array(object.__getattribute__(self,'data').GetOrigin())
+    #             self.spacing = n.array(object.__getattribute__(self,'data').GetSpacing())
+    #
+    #         if name in ['slices','minCoord','maxCoord'] and object.__getattribute__(self,name) is None:
+    #             tmp = n.array(object.__getattribute__(self,'data').nonzero())
+    #             self.minCoord = n.min(tmp,1)
+    #             self.maxCoord = n.max(tmp,1)
+    #             self.slices = tuple([slice(object.__getattribute__(self,'minCoord')[i],object.__getattribute__(self,'maxCoord')[i]) for i in range(3)])
+    #
+    #     return object.__getattribute__(self,name)
 
 
 class ChannelData(object):
@@ -169,12 +264,18 @@ class ChannelData(object):
     # raw data, prediction, etc. by adding prepareTimepoints method
     # (and possibly more)
 
-    def __init__(self,parent,nickname,redo=False):
-        print 'instanciating channel data in dir %s' %self.dir
+    def __init__(self,parent,nickname,redo=False,compression=None,compressionOption=None):
+        print 'instanciating channel data with nickname %s' %nickname
 
         self.parent = parent
         self.nickname = nickname
         self.redo = redo
+
+        self.compression = compression
+        self.compressionOption = compressionOption
+
+        self.spacing = parent.spacing
+        self.origin = parent.origin
 
         if not self.__dict__.has_key('validTimes'):
             if self.__dict__.has_key('baseData'):
@@ -188,12 +289,12 @@ class ChannelData(object):
             raise(Exception('nickname already taken'))
         parent.__setattr__(nickname,self)
 
-        if not self.__dict__.has_key('fileNameFormat'):
-            self.fileNameFormat = config['fileNameFormat']
+        # if not self.__dict__.has_key('fileNameFormat'):
+        #     self.fileNameFormat = config['fileNameFormat']
 
-        if not os.path.exists(self.dir):
-            print 'creating %s' %(self.dir)
-            os.mkdir(self.dir)
+        # if not os.path.exists(self.dir):
+        #     print 'creating %s' %(self.dir)
+        #     os.mkdir(self.dir)
 
         timepointsToPrepare = n.array(list(set(self.validTimes).intersection(set(self.parent.times))))
         timepointsToPrepare = list(timepointsToPrepare[n.argsort(timepointsToPrepare)])
@@ -212,16 +313,15 @@ class ChannelData(object):
         if not self.timesDict.has_key(item):
             print '%s: preparing time %s' %(self.nickname,item)
             self.timesDict[item] = self.prepareTimepoints([item],self.redo)[item]
-            # self.timesDict[item] = Stack(self.getFileName(item))
-        # return self.timesDict[item].__get__(self,self.timepointClass)
-        return self.timesDict[item].__get__(self,0)
-        # return self.timesDict[item]#.__get__(self,self.timepointClass)
-        if type(item) == tuple and len(item) == 2:
-            return self[item[0]][item[1]]
-        elif type(item) == list or (type(item) == n.ndarray and len(item.shape) == 1):
-            tmpDict = dict()
-            for iiitem,iitem in enumerate(item): tmpDict[int(iiitem)] = self[int(item[iiitem])]
-            return Tupable(tmpDict)
+        # return self.timesDict[item].__get__(self,0)
+        return self.parent[item][self.hierarchy]
+
+        # if type(item) == tuple and len(item) == 2:
+        #     return self[item[0]][item[1]]
+        # elif type(item) == list or (type(item) == n.ndarray and len(item.shape) == 1):
+        #     tmpDict = dict()
+        #     for iiitem,iitem in enumerate(item): tmpDict[int(iiitem)] = self[int(item[iiitem])]
+        #     return Tupable(tmpDict)
 
     def __call__(self,itemValidIndex):
         if type(itemValidIndex) in [int]:
@@ -229,13 +329,10 @@ class ChannelData(object):
             if not self.timesDict.has_key(item):
                 print '%s: preparing time %s' %(self.nickname,item)
                 self.timesDict[item] = self.prepareTimepoints([item],self.redo)[item]
-                # self.timesDict[item] = Stack(self.getFileName(item))
             return self.timesDict[item].__get__(self,self.timepointClass)
         elif type(itemValidIndex) == tuple and len(itemValidIndex) == 2:
-            #item[0] = self.validTimes[item[0]]
             return self[itemValidIndex[0]][itemValidIndex[1]]
         elif type(itemValidIndex) == list or (type(itemValidIndex) == n.ndarray and len(itemValidIndex.shape) == 1):
-            #item = n.array(self.validTimes)[item]
             tmpDict = dict()
             for iiitem,iitem in enumerate(itemValidIndex): tmpDict[int(iiitem)] = self(int(iitem))
             return Tupable(tmpDict)
@@ -258,39 +355,36 @@ class ChannelData(object):
     #         for iiitem,iitem in enumerate(range(len(item))): tmpDict[int(iitem)] = self[int(item[iiitem])]
     #         return Tupable(tmpDict)
 
-    def getFileName(self,time):
-
-        return os.path.join(self.dir,self.fileNameFormat %time)
+    # def getFileName(self,time):
+    #
+    #     return os.path.join(self.parent.dataDir,self.parent.fileNameFormat %time)
 
     def __len__(self):
         return len(self.validTimes)
 
-    def close(self,time):
-        try:
-            print 'closing'
-            self.timesDict[int(time)].close()
-        except:
-            print 'could not close'
+    # def close(self,time):
+    #     try:
+    #         print 'closing'
+    #         self.timesDict[int(time)].close()
+    #     except:
+    #         print 'could not close'
 
 class IndependentChannel(ChannelData):
-
-    # abstract class for channel image data, to be subclassed for
-    # raw data, prediction, etc. by adding prepareTimepoints method
-    # (and possibly more)
 
     def __init__(self,parent,baseData,nickname,processClass,redo=False,*args,**kargs):
 
         # no dir setting here?
 
         self.baseData = baseData
-        self.dir = self.baseData.dir
+        # self.dir = self.baseData.dir
 
-        self.processObject = processClass(*args)
+        self.processObject = processClass(*args,**kargs)
         # self.parent = parent
         self.nickname = nickname
+        self.hierarchy = nickname
         self.redo = redo
 
-        super(IndependentChannel,self).__init__(parent,nickname,*args,**kargs)
+        super(IndependentChannel,self).__init__(parent,nickname,redo=self.redo)
         return
 
     def prepareTimepoints(self,times,redo):
@@ -299,17 +393,19 @@ class IndependentChannel(ChannelData):
 
         alreadyDoneTimes, toDoTimes = [],[]
         for itime,time in enumerate(times):
-            tmpFile = h5py.File(self.baseData.getFileName(time))
+            # tmpFile = h5py.File(self.baseData.getFileName(time))
+            tmpFile = self.parent[time]
             if self.nickname in tmpFile.keys():
                 if redo:
                     del tmpFile[self.nickname]
                     toDoTimes.append(time)
                 else:
                     alreadyDoneTimes.append(time)
-                    outDict[time] = self.processObject.fromFile(self.getFileName(time),hierarchy=self.nickname)
+                    # outDict[time] = self.processObject.fromFile(self.getFileName(time),hierarchy=self.nickname)
+                    outDict[time] = True
             else:
                 toDoTimes.append(time)
-            tmpFile.close()
+            # tmpFile.close()
 
         print 'already prepared: %s\nto prepare: %s\n' %(alreadyDoneTimes,toDoTimes)
 
@@ -317,27 +413,33 @@ class IndependentChannel(ChannelData):
 
         for itime,time in enumerate(toDoTimes):
 
-            tmpFile = h5py.File(self.baseData.getFileName(time))
+            with DelayedKeyboardInterrupt():
 
-            tmpPrefix = self.nickname+'_'
+                # tmpFile = h5py.File(self.baseData.getFileName(time))
+                tmpFile = self.parent[time]
 
-            for group in tmpFile.keys():
-                if tmpPrefix in group: del tmpFile[group]
+                tmpPrefix = self.nickname+'_'
 
-            tmpString = tmpPrefix + str(n.random.randint(0,1000000000000000,1)[0])
-            while tmpString in tmpFile.keys():
+                # for group in tmpFile.keys():
+                #     if tmpPrefix in group: del tmpFile[group]
+
                 tmpString = tmpPrefix + str(n.random.randint(0,1000000000000000,1)[0])
+                while tmpString in tmpFile.keys():
+                    tmpString = tmpPrefix + str(n.random.randint(0,1000000000000000,1)[0])
 
-            tmpGroup = tmpFile.create_group(tmpString)
+                tmpGroup = tmpFile.create_group(tmpString)
 
-            self.processObject.fromFrame(self.baseData[time],tmpGroup)
+                # self.processObject.fromFrame(self.baseData[time],tmpGroup)
+                self.processObject.fromFrame(self.baseData[time],tmpFile,tmpString)
 
-            tmpFile.move(tmpString,self.nickname)
+                tmpFile.move(tmpString,self.hierarchy)
 
-            # outDict[time] = descriptors.H5Pointer(rootFile.filename,nickname)
-            outDict[time] = self.processObject.timepointClass(self.baseData.getFileName(time),self.nickname)
+                # outDict[time] = descriptors.H5Pointer(rootFile.filename,nickname)
+                # outDict[time] = self.processObject.timepointClass(self.baseData.getFileName(time),self.nickname)
+                outDict[time] = True
 
-            tmpFile.close()
+                # tmpGroup = None
+                # tmpFile.close()
 
         return outDict
 
@@ -442,12 +544,18 @@ class RawChannel(ChannelData):
 
     nickname = 'rawData'
 
-    def __init__(self,parent,channel,nickname,*args,**kargs):
+    def __init__(self,parent,channel,nickname,hierarchy=None,relRawDataDir=None,*args,**kargs):
         print 'creating raw channel'
-        self.dir = os.path.join(parent.dataDir,config['relRawDataDir'] %channel)
-        self.timepointClass = H5Array
+        # if not relRawDataDir is None:
+        #     self.dir = os.path.join(parent.dataDir,relRawDataDir)
+        # else: self.dir = os.path.join(parent.dataDir,config['relRawDataDir'] %channel)
+        if not hierarchy is None:
+            self.hierarchy = hierarchy
+        else: self.hierarchy = config['rawHierarchy']
+
+        self.timepointClass = h5py.Dataset
         self.channel = channel
-        self.hierarchy = 'DS1'
+        # self.hierarchy = 'DS1'
         # self.hierarchy = 'Data' #malbert
         super(RawChannel,self).__init__(parent,nickname,*args,**kargs)
         self.parent.shape = self[self.parent.times[0]].shape
@@ -460,13 +568,19 @@ class RawChannel(ChannelData):
 
         alreadyDoneTimes, toDoTimes = [],[]
         for itime,time in enumerate(times):
-            tmpFile = h5py.File(self.getFileName(time))
-            if self.hierarchy in tmpFile.keys():
+            # tmpFile = h5py.File(self.getFileName(time))
+            tmpFile = self.parent[time]
+            if self.hierarchy in tmpFile.keys() and not redo:
                 alreadyDoneTimes.append(time)
-                outDict[time] = H5Array(self.getFileName(time))
+                # outDict[time] = H5Array(self.getFileName(time),hierarchy=self.hierarchy)
+                outDict[time] = True
+            elif self.hierarchy in tmpFile.keys() and redo:
+                del tmpFile[self.hierarchy]
+                toDoTimes.append(time)
             else:
                 toDoTimes.append(time)
-            tmpFile.close()
+
+            # tmpFile.close()
 
         print 'already prepared: %s\nto prepare: %s\n' %(alreadyDoneTimes,toDoTimes)
 
@@ -494,16 +608,60 @@ class RawChannel(ChannelData):
 
             else: raise(Exception('check load format'))
 
-            if not os.path.exists(self.getFileName(time)):
-                filing.toH5(tmpData,self.getFileName(time),hierarchy=self.hierarchy)
-            else:
-                tmpFile = h5py.File(self.getFileName(time))
-                tmpFile[self.hierarchy] = tmpData
-                tmpFile.close()
+            tmpData = interpolateEmptyPlanes(tmpData)
 
-            outDict[time] = H5Array(self.getFileName(time))
+            # if not os.path.exists(self.getFileName(time)):
+            #     filing.toH5(tmpData,self.getFileName(time),hierarchy=self.hierarchy)
+            # else:
+                # tmpFile = h5py.File(self.getFileName(time))
+            tmpFile = self.parent[time]
+
+            filing.toH5_hl(tmpData,tmpFile,hierarchy=self.hierarchy)
+
+            # tmpFile[self.hierarchy] = tmpData
+                # tmpFile.close()
+
+            # outDict[time] = H5Array(self.getFileName(time),hierarchy=self.hierarchy)
+            outDict[time] = True
 
         return outDict
+
+def interpolateEmptyPlanes(ar):
+
+    shape = ar.shape
+    profile = n.max(n.max(ar,-1),-1)>0
+
+    # cut ends
+    start = n.argmax(profile)
+    stop = len(profile)-1-n.argmax(profile[::-1])
+    # profile = profile[start:stop]
+
+
+    empties = n.where(profile==0)[0]
+    nonempties = n.where(profile!=0)[0]
+
+    for plane in empties:
+        if plane <= start or plane >= stop: continue
+        prevInd = n.argmax(nonempties[n.where(nonempties<plane)])
+        prev = nonempties[prevInd]
+        after = nonempties[prevInd+1]
+        print plane,prev,after
+
+        z = n.array([0,1])
+        y = n.linspace(0,shape[1]-1,shape[1])
+        x = n.linspace(0,shape[2]-1,shape[2])
+
+        interp = interpolate.RegularGridInterpolator((z,y,x),n.array([ar[prev],ar[after]]))
+
+        ys,xs = n.mgrid[0:shape[1],0:shape[2]]
+        ys = ys.flatten()
+        xs = xs.flatten()
+        zs = n.ones(len(xs))*(float(plane-prev)/(after-prev))
+
+        newim = interp(n.array([zs,ys,xs]).swapaxes(0,1)).reshape((shape[1],shape[2]))
+        ar[plane] = newim
+
+    return ar
 
 
 class UnstructuredData(object):

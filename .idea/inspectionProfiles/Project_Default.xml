@@ -18,6 +18,10 @@
           <option value="helpers2.sitk" />
           <option value="prediction.sitk" />
           <option value="objects.n" />
+          <option value="skeletonize.ij" />
+          <option value="movieScript.ndimage" />
+          <option value="movieScript.n" />
+          <option value="mains.test.sitk" />
         </list>
       </option>
     </inspection_tool>

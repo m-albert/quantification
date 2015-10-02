@@ -4,33 +4,26 @@ import sys
 sys.path = [sys.path[0]]+['..']+sys.path[1:]
 from dependencies import *
 
+reference = descriptors.Image(prefix+'/data/malbert/atlas/references/50dpf_af_gfp/20150812/output/stack1.tif',
+                              shape=(1920, 1920, 319),spacing=[0.29,0.29,0.55])
+mask = descriptors.Image(prefix+'/data/malbert/atlas/references/50dpf_af_gfp/20150812/output/reference_mask.tif',
+                                shape=(1920, 1920, 319),spacing=[0.29,0.29,0.55])
 
 # reference = sitk.ReadImage('/data/malbert/atlas/references/45dpf_af_gfp/stack1.tif')
-
-reference = descriptors.Image(prefix+'/data/malbert/atlas/references/45dpf_af_gfp/20150811/output/stack1.tif',
-                         shape=(1920, 1920, 317),spacing=[0.29,0.29,0.55])
-mask = descriptors.Image(prefix+'/data/malbert/atlas/references/45dpf_af_gfp/20150811/output/reference_mask.tif',
-                         shape=(1920, 1920, 317),spacing=[0.29,0.29,0.55])
-
-# reference = sitk.ReadImage('/data/malbert/atlas/references/45dpf_af_gfp/20150811/output/stack1.tif')
-# mask = sitk.ReadImage('/data/malbert/atlas/references/45dpf_af_gfp/20150811/output/reference_scaled448_mask.tif')
+# reference = sitk.ReadImage('/data/malbert/atlas/references/50dpf_af_gfp/20150812/output/stack1.tif')
+# mask = sitk.ReadImage('/data/malbert/atlas/references/50dpf_af_gfp/20150812/output/reference_scaled448_mask.tif')
 # mask.SetSpacing([4,4,8])
 # mask = sitk.Resample(mask,reference)
-# rreference = sitk.ReadImage('/data/malbert/atlas/references/45dpf_af_gfp/20150811/output/reference.tif')
 # reference.SetSpacing([4,4,2./0.55])
-# samples = [1,2,3,5,9,10]
-# samples = [11,12,13,15,16]
-# samples = [1,2,3,5,9,10,11,12,13,15,16] # 11
-samples = [1,2,3,5,9,11,12,13,16] # 11, without indicies 5 and -2 which conflict with mask
+samples = [1,2,5,6,7,8,9,10,11] # samples 0812 5dpf
 
 bs = []
 for isample,sample in enumerate(samples):
-    b = brain.Brain(prefix+'/data/malbert/data/dbspim/20150810_p2y12/20150811_p2y12_40dpf/20150811_p2y12_4dpf_1min_%s.czi' %sample,
+    b = brain.Brain(prefix+'/data/malbert/data/dbspim/20150810_p2y12/20150812_p2y12_50dpf/20150812_p2y12_5dpf_1min_%s.czi' %sample,
                     dimc=1,
                     times=range(10),
-
                     baseDataDir=prefix+'/data/malbert/quantification',
-                    subDir = prefix+'20150811_p2y12_4dpf_1min_%s.czi' %sample,
+                    subDir = '20150812_p2y12_5dpf_1min_%s.czi' %sample,
                     fileNameFormat='f%06d.h5',
                     spacing = [0.29,0.29,0.55]
                     )

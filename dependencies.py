@@ -3,12 +3,32 @@ __author__ = 'malbert'
 # from imports import *
 
 import sys,os,inspect,subprocess,shutil,copy,ast,time,itertools,re,pdb
+import signal,logging
 
+timestamp = time.localtime()
+timestamp = '%02d%02d%02d_%02d%02d%02d' %tuple([timestamp[i] for i in range(6)])
 
-sys.path.append('/home/malbert/software/trackpy')
-sys.path.append('/home/malbert/software/scripts')
-sys.path.append('/home/malbert/software/fusion/zeiss/experimental')
-sys.path.append('/home/malbert/software/fusion/dependencies_linux/SimpleITKcurrent')
+if sys.platform == 'darwin':
+    prefix = '/Volumes'
+    sys.path.append('/Users/malbert/Documents/software/SimpleITK-0.9.1-py2.7-macosx-10.6-intel.egg_FILES')
+    sys.path.append('/Users/malbert/Documents/projects/preprocessing')
+    sys.path.append('/Users/malbert/Documents/projects/scripts')
+    #sys.path.append('/Users/malbert/Documents/projects/dualview')
+    sys.path.append('/Users/malbert/Documents/projects/zeissFusion/experimental')
+    sys.path.append('/Users/malbert/Documents/software/trackpy')
+    tmpDir = os.path.join('/tmp','quantificationTmpFolder_%s' %timestamp)
+    elastixPath = '/Users/malbert/Documents/software/elastix_macosx64_v4.8/bin/elastix'
+    fijiPath = 'fiji'
+
+elif sys.platform == 'linux2':
+    prefix = ''
+    sys.path.append('/home/malbert/software/trackpy')
+    sys.path.append('/home/malbert/software/scripts')
+    sys.path.append('/home/malbert/software/fusion/zeiss/experimental')
+    sys.path.append('/home/malbert/software/fusion/dependencies_linux/SimpleITKcurrent')
+    tmpDir = os.path.join('/data/malbert/tmp','quantificationTmpFolder_%s' %timestamp)
+    elastixPath = '/home/malbert/bin/elastix'
+    fijiPath = '/home/malbert/software/fiji/Fiji/ImageJ-linux64'
 
 import ilastiking,filing,imaging
 import transformations
@@ -21,13 +41,9 @@ from matplotlib import pyplot
 
 import czifile
 
-timestamp = time.localtime()
-timestamp = '%02d%02d%02d_%02d%02d%02d' %tuple([timestamp[i] for i in range(6)])
-tmpDir = os.path.join('/data/malbert/tmp','quantificationTmpFolder_%s' %timestamp)
-# pdb.set_trace()
 if not os.path.exists(tmpDir): os.mkdir(tmpDir)
 
-elastixPath = '/home/malbert/bin/elastix'
+projectDir = os.path.dirname(os.path.abspath(__file__))
 
 config = dict()
 
@@ -37,7 +53,8 @@ sitk.gafi = sitk.GetArrayFromImage
 
 import h5py
 import numpy as n
-from scipy import ndimage,spatial
+from scipy import ndimage,spatial,cluster,interpolate
+import random
 
 import misc
 import brain
@@ -48,6 +65,8 @@ import segmentation
 import tracking
 import activity
 import objects
+
+ar = n.array
 
 # import objects
 # import microglia
