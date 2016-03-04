@@ -4,24 +4,27 @@ from dependencies import *
 
 class Objects(object):
 
-    def __init__(self, minSize = 100, minSizeMaxSeparation = (1000,30)):
+    def __init__(self,parent, minSize = 100, minSizeMaxSeparation = (1000,30)):
         print 'instanciating Objects'
         self.minSize = minSize
         self.minSizeMaxSeparation = minSizeMaxSeparation
         self.timepointClass = h5py.Group
+        self.parent = parent
         return
 
     # def fromFile(self,rootFileName,hierarchy):
     #     # return descriptors.H5Pointer(rootFileName,hierarchy)
     #     return True
 
-    def fromFrame(self,frame,tmpFile,tmpHierarchy):
+    def fromFrame(self,time,frame,tmpFile,tmpHierarchy):
 
         print 'extracting objects...'
 
         # filePointer = rootFile.create_group(tmpString)
+        tmpGroup = tmpFile.create_group(tmpHierarchy)
 
         labels,N = ndimage.label(frame)#,structure=n.ones((3,3,3)))
+        labels = labels.astype(n.uint16)
         sizes = imaging.getSizes(labels)
         objects = ndimage.find_objects(labels)
 
@@ -115,7 +118,7 @@ class Objects(object):
             flabels[tuple(bboxs[iobj])][tuple(coordinatess[iobj].swapaxes(0,1))] = iobj+1
 
         # filePointer['labels'] = flabels
-        filing.toH5_hl(flabels,tmpFile,hierarchy=os.path.join(tmpHierarchy,'labels'))
+        filing.toH5_hl(flabels,tmpFile,hierarchy=os.path.join(tmpHierarchy,'labels'),compression='jls')
 
         # filePointer['nObjects'] = len(bboxs)
         filing.toH5_hl(len(bboxs),tmpFile,hierarchy=os.path.join(tmpHierarchy,'nObjects'))
@@ -141,21 +144,197 @@ class Objects(object):
         # return descriptors.H5Pointer(rootFile.filename,nickname)
         return
 
+class Tracks(object):
+
+    def __init__(self,parent,minTrackLength=2,maxObjectDisplacementPerDimension=10.,memory=0):
+        self.minTrackLength = minTrackLength
+        self.maxObjectDisplacementPerDimension = maxObjectDisplacementPerDimension
+        self.memory = memory
+        self.parent = parent
+        return
+
+    def fromBaseData(self,baseData,tmpFile,tmpHierarchy):
+
+        print 'tracking objects...'
+
+        # tmpFile[tmpHierarchy]['objects'] = baseData.hierarchy
+
+        indexing = misc.customIndex(2)
+
+        indices = []
+        times = []
+
+        # normalize features
+        sizes = n.array([n.array(baseData[time]['sizes']) for time in baseData.times])
+        sizeMax = n.max([n.median(sizes[isize]) for isize in range(len(sizes))])
+        sizeNormFactor = self.maxObjectDisplacementPerDimension/float(sizeMax)
+
+        nfeatures = 4
+        features = [[] for i in range(nfeatures)]
+        for time in baseData.times:
+            for iobj in range(n.array(baseData[time]['nObjects'])):
+                times.append(time)
+                for ifeat in range(3):
+                    features[ifeat].append(baseData[time]['centers'][iobj][ifeat])
+                features[-1].append(baseData[time]['sizes'][iobj]*sizeNormFactor)
+                indices.append(indexing.encode([time,iobj]))
+
+        print features[-1]
+        features = n.array(features)
+
+        maxObjectDisplacement = n.sqrt(self.maxObjectDisplacementPerDimension**2*nfeatures)
+        print 'maxObjectDisplacement %s' %maxObjectDisplacement
+        dataDict = dict()
+        dataDict['frame'] = times
+        pos_columns = []
+        for ifeat in range(nfeatures):
+            dataDict[str(ifeat)] = features[ifeat]
+            pos_columns.append(str(ifeat))
+        # pos_columns = n.arange(nfeatures)
+        dataFrame = pandas.DataFrame(dataDict,index=indices)
+        # pdb.set_trace()
+        trackResults = trackpy.link_df(dataFrame,
+                                       maxObjectDisplacement,
+                                       pos_columns=pos_columns,
+                                       retain_index=True,
+                                       memory=self.memory)
+        # pdb.set_trace()
+        nParticles = int(n.array(trackResults.particle).max())
+        tracks = []
+        for itrack in range(nParticles+1):
+            tmpInds = n.where(n.array(trackResults.particle) == itrack)[0]
+            if not len(tmpInds) >= self.minTrackLength: continue
+            tmpTrack = []
+            tmpTotInds = n.array(trackResults.index)
+            for tmpInd in tmpInds:
+                tmpTime,tmpObj = indexing.decode(tmpTotInds[tmpInd])
+                # tmpTrack.append(objs[tmpTime][tmpObj])
+                tmpTrack.append([tmpTime,tmpObj])
+            tracks.append(tmpTrack)
+
+        tmpGroup = tmpFile[tmpHierarchy].create_group('tracks')
+        for itrack in range(len(tracks)):
+            filing.toH5_hl(tracks[itrack],tmpFile,hierarchy=os.path.join(tmpHierarchy,'tracks/%s' %itrack))
+        filing.toH5_hl(len(tracks),tmpFile,hierarchy=os.path.join(tmpHierarchy,'tracks/nTracks'))
+
+        tmpGroup = tmpFile[tmpHierarchy].create_group('labels')
+        labelDicts = n.array([n.zeros(int(n.array(baseData[time]['nObjects']))+1,dtype=n.uint16) for time in baseData.times])
+        for itrack in range(len(tracks)):
+            for itime in range(len(tracks[itrack])):
+                trackObj = tracks[itrack][itime]
+                labelDicts[list(baseData.times).index(trackObj[0])][trackObj[1]+1] = itrack+1
+
+        print 'calculating labels'
+        filing.toH5_hl(n.array(baseData.times),tmpFile,hierarchy=os.path.join(tmpHierarchy,'times'))
+        for itime,time in enumerate(baseData.times):
+            print 'label time %s' %time
+            labels = labelDicts[itime][n.array(baseData[time]['labels'])]
+            filing.toH5_hl(labels,tmpFile,hierarchy=os.path.join(tmpHierarchy,'labels/%s' %time),compression='jls')
+        return
+
+    def getTimePoint(self,tmpFile,tmpHierarchy,time):
+        # pdb.set_trace()
+        return tmpFile[tmpHierarchy]['labels'][str(time)]
+
+    def getLength(self,tmpFile,tmpHierarchy):
+        return len(n.array(tmpFile[tmpHierarchy]['times']))
+        # return n.array(n.array(tmpFile[tmpHierarchy]['tracks']['nTracks']))[0]
+
+    def getString(self,tmpFile,tmpHierarchy,string,baseData,**kargs):
+
+        if string == 'nTracks':
+            return n.array(tmpFile[tmpHierarchy]['tracks']['nTracks'])[0]
+
+        elif '/' in string:
+            """
+            base,hierarchy,string = 'base_hierarchy_string'
+            """
+            # pdb.set_trace()
+            split = string.split('/')
+            string = split[-1]
+            if len(split) == 3:
+                base,hierarchy = split[:2]
+            else: raise(Exception('wrong string'))
+            # elif len(split) == 2:
+            #     base,hierarchy = split[0],None
+            # string = string[2:]
+            times = n.array(tmpFile[tmpHierarchy]['tracks'][string])[:,0]
+            objs = n.array(tmpFile[tmpHierarchy]['tracks'][string])[:,1]
+            res=[]
+            shapes,minCoords = [],[]
+            pdb.set_trace()
+            for itime,time in enumerate(times):
+                # pdb.set_trace()
+                # if tmpBbox
+                tmpBbox = bbox(baseData[time]['bboxs'][objs[itime]])
+                # if len(kargs.keys()):
+                #     if 'hierarchy' in kargs.keys():
+                #         tmpImage = kargs['base'][kargs['hierarchy']][str(time)]
+                #     else:
+                #         tmpImage = kargs['base'][time]
+                # else:
+                if not len(base) and len(hierarchy):
+                    tmpImage = tmpFile[tmpHierarchy][hierarchy][str(time)][tmpBbox]
+                elif len(base) and not len(hierarchy):
+                    # get baseData evaluated at objects coordinates
+                    tmpCoords = n.array(baseData[time]['coordinates'][str(objs[itime])])
+                    # pdb.set_trace()
+                    tmpData = self.parent.__dict__[base][time][tmpBbox]
+                    tmpImage = n.zeros(tmpData.shape,dtype=tmpData.dtype)
+                    tmpImage[tuple(tmpCoords.swapaxes(0,1))] = tmpData[tuple(tmpCoords.swapaxes(0,1))]
+                    # tmpImage = tmpFile[base][time]
+                elif len(base) and len(hierarchy):
+                    # get other baseData hierarchy values like surface or size
+                    # tmpImage = self.parent.__dict__[base][hierarchy][str(time)][tmpBbox]
+                    tmpImage = self.parent.__dict__[base][time][hierarchy][objs[itime]]
+                else:
+                    tmpImage = tmpFile[tmpHierarchy]['labels'][str(time)][tmpBbox]
+                    tmpImage = tmpImage/tmpImage.max()
+                # tmp = tmpImage[tmpBbox]
+                res.append(tmpImage)
+                shapes.append(tmpImage.shape)
+                minCoords.append(n.array(baseData[time]['minCoordinates'][objs[itime]]))
+
+            if (len(base) and len(hierarchy)): return res
+            minCoords = n.array(minCoords).astype(n.uint16)
+            maxCoord = n.max(n.array(shapes+minCoords),0)
+            minCoord = n.min(n.array(minCoords),0)
+            maxShape = n.array(maxCoord-minCoord).astype(n.uint16)
+            nres = n.zeros((len(times),)+tuple(maxShape),dtype=n.uint16)
+            for itime,time in enumerate(times):
+                #nres[itime,0:shapes[itime][0],0:shapes[itime][1],0:shapes[itime][2]] = res[itime]
+
+                minIndex = n.round(minCoords[itime])-minCoord
+                maxIndex = minIndex+shapes[itime]
+
+                nres[(itime,)+tuple(slice(start,stop) for start,stop in zip(minIndex,maxIndex))] = res[itime]
+
+            return nres
+        else:
+            return n.array(tmpFile[tmpHierarchy]['tracks'][string])
+
+def getTracks(tmpGroup):
+    nTracks = n.array(tmpGroup['nTracks'])
+    tracks = []
+    for itrack in range(nTracks):
+        tracks.append(list(n.array(tmpGroup[str(itrack)])))
+    return tracks
 
 class Skeletons(object):
 
-    def __init__(self, nDilations):
+    def __init__(self,parent, nDilations):
         print 'instanciating Skeletons'
         self.nDilations = nDilations
         # self.timepointClass = descriptors.H5Pointer
         self.timepointClass = h5py.Group
+        self.parent = parent
         return
 
     # def fromFile(self,rootFileName,hierarchy):
     #     return descriptors.H5Pointer(rootFileName,hierarchy)
 
-    def fromFrame(self,frame,tmpFile,tmpHierarchy):
-
+    def fromFrame(self,time,frame,tmpFile,tmpHierarchy):
+        tmpGroup = tmpFile.create_group(tmpHierarchy)
         print 'extracting skeletons...'
         # filePointer['nDilations'] = self.nDilations
         filing.toH5_hl(self.nDilations,tmpFile,hierarchy=os.path.join(tmpHierarchy,'nDilations'))
@@ -168,19 +347,22 @@ class Skeletons(object):
         nObjects = n.array(frame['nObjects'])
 
         labels = sitk.gifa((n.array(frame['labels'])>0).astype(n.uint8))
-        labels = sitk.BinaryFillhole(labels)
+        # labels = fillHole2d(labels)
+        labels = dilateAndErode(labels,self.nDilations)
+        # labels = sitk.BinaryFillhole(labels)
         # pdb.set_trace()
-        for i in range(self.nDilations):
-            labels = sitk.BinaryDilate(labels)
-        for i in range(self.nDilations):
-            labels = sitk.BinaryErode(labels)
+        # for i in range(self.nDilations):
+        #     labels = sitk.BinaryDilate(labels)
+        # for i in range(self.nDilations):
+        #     labels = sitk.BinaryErode(labels)
 
-        labels = sitk.BinaryFillhole(labels)
+        # labels = sitk.BinaryFillhole(labels)
+        labels = fillHole2d(labels)
 
         skeletonIm = skeletonizeImage(labels)
         # pdb.set_trace()
         # filePointer['skeletonLabels'] = skeletonIm
-        filing.toH5_hl(skeletonIm,tmpFile,hierarchy=os.path.join(tmpHierarchy,'skeletonLabels'))
+        filing.toH5_hl(skeletonIm.astype(n.uint16),tmpFile,hierarchy=os.path.join(tmpHierarchy,'skeletonLabels'),compression='jls')
 
 
         for iobj in range(nObjects):
@@ -201,17 +383,18 @@ class Skeletons(object):
 
 class Hulls(object):
 
-    def __init__(self):
+    def __init__(self,parent):
         print 'instanciating Hulls'
         # self.timepointClass = descriptors.H5Pointer
         self.timepointClass = h5py.Group
+        self.parent = parent
         return
 
     # def fromFile(self,rootFileName,hierarchy):
     #     return descriptors.H5Pointer(rootFileName,hierarchy)
 
-    def fromFrame(self,frame,tmpFile,tmpHierarchy):
-
+    def fromFrame(self,time,frame,tmpFile,tmpHierarchy):
+        tmpGroup = tmpFile.create_group(tmpHierarchy)
         print 'extracting convex hulls...'
 
         verticesGroup = tmpFile[tmpHierarchy].create_group('nodeValues')
@@ -245,6 +428,78 @@ class Hulls(object):
         filing.toH5_hl(labels,tmpFile,hierarchy=os.path.join(tmpHierarchy,'labels'))
 
         return
+
+def fillHole2d(im):
+    wasSitk = False
+    if type(im) == sitk.Image:
+        im = sitk.gafi(im).astype(n.uint16)
+        wasSitk = True
+
+    def perform(image):
+        res = n.array([ndimage.binary_fill_holes(i) for i in image]).astype(image.dtype)
+        # fill = res-image
+        # objects = ndimage.measurements.find_objects(fill)
+        # sizes = imaging.getSizes(fill)
+        # for iobj in range(len(objects)):
+        #     tmpSlice = list(objects[iobj])
+        #     len1 = tmpSlice[1].stop-tmpSlice[1].start
+        #     len2 = tmpSlice[2].stop-tmpSlice[2].start
+        #     tmpSlice[0] = slice(tmpSlice[0].start-n.mean([len1,len2])/2.,tmpSlice[0].stop+n.mean([len1,len2])/2.)
+        #     tmpSlice = tuple(tmpSlice)
+        #     shape = res[tmpSlice].shape
+        #     center = shape/2
+        #     x,y,z = n.mgrid[0:shape[0],0:shape[1],0:shape[2]]
+        #     ((x-center[0])**2+(y-center[1])**2+(z-center[2])**2)<
+        #     ellipse[n.where(ellipse)]
+
+        return res
+
+    res = perform(im)
+    res = perform(res.swapaxes(0,1)).swapaxes(0,1)
+    res = perform(res.swapaxes(0,2)).swapaxes(0,2)
+    res = perform(res)
+    res = perform(res.swapaxes(0,1)).swapaxes(0,1)
+    res = perform(res.swapaxes(0,2)).swapaxes(0,2)
+
+    if wasSitk:
+        res = sitk.gifa(res)
+    return res
+
+# def fillHolePlus(im):
+#     wasSitk = False
+#     if type(im) == sitk.Image:
+#         im = sitk.gafi(im).astype(n.uint16)
+#         wasSitk = True
+#
+#     res = fillHole2d(im)
+#
+#     # fills = res-im
+#
+#     labels,N = ndimage.measurements.find_objects(fills)
+#     for
+#
+#     res = fillHole2d(res)
+#
+#     if wasSitk:
+#         res = sitk.gifa(res)
+#     return res
+
+def dilateAndErode(im,N):
+    if not N: return im
+    wasNumpy = False
+    if type(im) == n.ndarray:
+        im = sitk.gifa(im)
+        wasNumpy = True
+
+    for i in range(N):
+        im = sitk.BinaryDilate(im)
+    for i in range(N):
+        im = sitk.BinaryErode(im)
+
+    if wasNumpy:
+        im = sitk.gafi(im)
+    return im
+
 
 
 def skeletonizeImage(im):
@@ -477,7 +732,6 @@ def Wk(mu, clusters):
     return sum([n.linalg.norm(mu[i]-c)**2/(2*len(c)) \
                for i in range(K) for c in clusters[i]])
 
-
 # from objects import Wk,gap_statistic
 #
 # wkbs = []
@@ -489,3 +743,53 @@ def Wk(mu, clusters):
 #     wkbs.append(n.log(Wk([n.mean(coords,0)],[coords])))
 #
 # mwkbs = n.mean(wkbs)
+
+# def main():
+#     # Generate some data with anisotropic cells...
+#     # x,y,and z will range from -2 to 2, but with a
+#     # different (20, 15, and 5 for x, y, and z) number of steps
+#     x,y,z = np.mgrid[-2:2:20j, -2:2:15j, -2:2:5j]
+#     r = np.sqrt(x**2 + y**2 + z**2)
+#
+#     dx, dy, dz = [np.diff(it, axis=a)[0,0,0] for it, a in zip((x,y,z),(0,1,2))]
+#
+#     # Your actual data is a binary (logical) array
+#     max_radius = 1.5
+#     data = (r <= max_radius).astype(np.int8)
+#
+#     ideal_volume = 4.0 / 3 * max_radius**3 * np.pi
+#     coarse_volume = data.sum() * dx * dy * dz
+#     est_volume = vtk_volume(data, (dx, dy, dz), (x.min(), y.min(), z.min()))
+#
+#     coarse_error = 100 * (coarse_volume - ideal_volume) / ideal_volume
+#     vtk_error = 100 * (est_volume - ideal_volume) / ideal_volume
+#
+#     print 'Ideal volume', ideal_volume
+#     print 'Coarse approximation', coarse_volume, 'Error', coarse_error, '%'
+#     print 'VTK approximation', est_volume, 'Error', vtk_error, '%'
+
+def vtk_volume(data, spacing=(1,1,1), origin=(0,0,0)):
+    data = data.astype(n.int8)
+    from tvtk.api import tvtk
+    data[data == 0] = -1
+    grid = tvtk.ImageData(spacing=spacing, origin=origin)
+    grid.point_data.scalars = data.T.ravel() # It wants fortran order???
+    grid.point_data.scalars.name = 'scalars'
+    grid.dimensions = data.shape
+
+    iso = tvtk.ImageMarchingCubes(input=grid)
+    mass = tvtk.MassProperties(input=iso.output)
+    return mass.volume
+
+def vtk_surface(data, spacing=(1,1,1), origin=(0,0,0)):
+    data = data.astype(n.int8)
+    from tvtk.api import tvtk
+    data[data == 0] = -1
+    grid = tvtk.ImageData(spacing=spacing, origin=origin)
+    grid.point_data.scalars = data.T.ravel() # It wants fortran order???
+    grid.point_data.scalars.name = 'scalars'
+    grid.dimensions = data.shape
+
+    iso = tvtk.ImageMarchingCubes(input=grid)
+    mass = tvtk.MassProperties(input=iso.output)
+    return mass.surface_area

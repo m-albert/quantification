@@ -24,7 +24,7 @@ bs = []
 for isample,sample in enumerate(samples):
     b = brain.Brain(prefix+'/data/malbert/data/dbspim/20150810_p2y12/20150810_p2y12_65dpf/20150809_p2y12_6dpf_1min_3_%s.czi' %sample,
                     dimc=1,
-                    times=range(10),
+                    times=range(1),
                     baseDataDir=prefix+'/data/malbert/quantification',
                     subDir = '20150809_p2y12_6dpf_1min_3_%s.czi' %sample,
                     fileNameFormat='f%06d.h5',
@@ -52,10 +52,24 @@ for isample,sample in enumerate(samples):
 
     descriptors.IndependentChannel(b,b.ms,'objects',objects.Objects,redo=False)
 
-    descriptors.IndependentChannel(b,b.objects,'skeletons_0',objects.Skeletons,nDilations=0,redo=False)
+    descriptors.IndependentChannel(b,b.objects,'skeletons_0',objects.Skeletons,nDilations=3,redo=False)
     # descriptors.IndependentChannel(b,b.skeletons_0,'hulls',objects.Hulls,redo=True)
 
     bs.append(b)
 
+for ib,b in enumerate(bs):
+    tmp = n.array(bs[ib].interaligned[0])[mask.slices]
+    obj = n.array(bs[ib].objects[0]['labels'])
+    lab = n.array(bs[ib].ms[0])
+    for i in range(3):
+        sitk.WriteImage(sitk.gifa([tmp,obj,lab][i].astype(n.uint16)),'%s/results/clicking/brain_%s_%s.tif' %(bs[0].dataDir,ib,i))
+
+
+
 # execfile('density.py')
-execfile('../movieScript.py')
+# execfile('../movieScript.py')
+#
+# q = n.sum([(n.array(bs[i].objects[0]['labels'])>0).astype(n.uint16) for i in range(len(bs))],0).astype(n.float)
+# projs = []
+# for dim in range(3):
+#     projs.append(n.max(q,dim))

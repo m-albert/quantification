@@ -133,6 +133,35 @@ class DelayedKeyboardInterrupt(object):
 #         # return self.__get__(self,H5Array)[item]
 #         return
 
+def imageFormat(imType):
+    # forces sitk.Image format on simple functions
+    # assumptions:
+    #   image is first in list of input arguments
+    #   output is just an image
+    def wrap(f):
+        def wrapped_f(*args,**kargs):
+            # pdb.set_trace()
+            args = list(args)
+            if type(args[0]) == sitk.Image:
+                wasSitk = True
+                if imType == n.ndarray:
+                    args[0] = sitk.gafi(args[0])
+            elif type(args[0]) == n.ndarray:
+                wasSitk = False
+                if imType == sitk.Image:
+                    args[0] = sitk.gifa(args[0])
+
+            args = tuple(args)
+            result = f(*args,**kargs)
+
+            if type(result) == sitk.Image and not wasSitk:
+                result = sitk.gafi(result)
+            if type(result) == n.ndarray and wasSitk:
+                result = sitk.gifa(result)
+            return result
+        return wrapped_f
+    return wrap
+
 class ToLoad(object):
     def __init__(self, var, func):
         self.var  = var
@@ -153,7 +182,7 @@ class Image(object):
     image = ToLoad('image', '_load_image')
     shape = ToLoad('shape', '_load_shape')
     origin = ToLoad('origin', '_load_origin')
-    spacing = ToLoad('origin', '_load_spacing')
+    spacing = ToLoad('spacing', '_load_spacing')
     minCoord = ToLoad('minCoord', '_load_minCoord')
     maxCoord = ToLoad('maxCoord', '_load_maxCoord')
     slices = ToLoad('slices', '_load_slices')
@@ -257,6 +286,20 @@ class Image(object):
     #
     #     return object.__getattribute__(self,name)
 
+def safeHierarchy(tmpFile,baseHierarchy):
+    candidates = []
+    maxIndex = len(baseHierarchy)
+    for hier in tmpFile.keys():
+        if hier[:maxIndex] == baseHierarchy:
+            candidates.append(hier)
+
+
+    if baseHierarchy in tmpFile.keys():
+        print 'la'
+
+    return
+
+
 
 class ChannelData(object):
 
@@ -276,6 +319,7 @@ class ChannelData(object):
 
         self.spacing = parent.spacing
         self.origin = parent.origin
+        self.times = self.parent.times
 
         if not self.__dict__.has_key('validTimes'):
             if self.__dict__.has_key('baseData'):
@@ -378,7 +422,11 @@ class IndependentChannel(ChannelData):
         self.baseData = baseData
         # self.dir = self.baseData.dir
 
-        self.processObject = processClass(*args,**kargs)
+        self.processObject = processClass(parent,*args,**kargs)
+        # if hasattr(self.processObject(),'groupOrImage'):
+        #     self.groupOrImage = True
+        # else: self.groupOrImage = False
+
         # self.parent = parent
         self.nickname = nickname
         self.hierarchy = nickname
@@ -427,10 +475,11 @@ class IndependentChannel(ChannelData):
                 while tmpString in tmpFile.keys():
                     tmpString = tmpPrefix + str(n.random.randint(0,1000000000000000,1)[0])
 
-                tmpGroup = tmpFile.create_group(tmpString)
+                # if self.groupOrImage:
+                #     tmpGroup = tmpFile.create_group(tmpString)
 
                 # self.processObject.fromFrame(self.baseData[time],tmpGroup)
-                self.processObject.fromFrame(self.baseData[time],tmpFile,tmpString)
+                self.processObject.fromFrame(time,self.baseData[time],tmpFile,tmpString)
 
                 tmpFile.move(tmpString,self.hierarchy)
 
@@ -544,7 +593,7 @@ class RawChannel(ChannelData):
 
     nickname = 'rawData'
 
-    def __init__(self,parent,channel,nickname,hierarchy=None,relRawDataDir=None,*args,**kargs):
+    def __init__(self,parent,channel,nickname,hierarchy=None,relRawDataDir=None,originalSpacing=None,*args,**kargs):
         print 'creating raw channel'
         # if not relRawDataDir is None:
         #     self.dir = os.path.join(parent.dataDir,relRawDataDir)
@@ -555,6 +604,7 @@ class RawChannel(ChannelData):
 
         self.timepointClass = h5py.Dataset
         self.channel = channel
+        self.originalSpacing = originalSpacing
         # self.hierarchy = 'DS1'
         # self.hierarchy = 'Data' #malbert
         super(RawChannel,self).__init__(parent,nickname,*args,**kargs)
@@ -608,13 +658,22 @@ class RawChannel(ChannelData):
 
             else: raise(Exception('check load format'))
 
-            tmpData = interpolateEmptyPlanes(tmpData)
+            if tmpData.max() == 0:
+                if itime: tmpData = n.array(self.parent[toDoTimes[itime-1]][self.hierarchy])
+            else:
+                tmpData = interpolateEmptyPlanes(tmpData)
 
             # if not os.path.exists(self.getFileName(time)):
             #     filing.toH5(tmpData,self.getFileName(time),hierarchy=self.hierarchy)
             # else:
                 # tmpFile = h5py.File(self.getFileName(time))
             tmpFile = self.parent[time]
+
+            if not self.originalSpacing is None:
+                tmpData = sitk.gifa(tmpData)
+                tmpData.SetSpacing(self.originalSpacing)
+                tmpData = stacking.space(tmpData,spacing=self.parent.spacing)
+                tmpData = sitk.gafi(tmpData)
 
             filing.toH5_hl(tmpData,tmpFile,hierarchy=self.hierarchy)
 
@@ -669,12 +728,16 @@ class UnstructuredData(object):
     # abstract class for unstructured data, to be subclassed
     # by adding prepare() method, data to pickle
 
-    def __init__(self,parent,nickname,redo=False):
-        print 'instanciating unstructured data at file %s' %self.fileName
+    def __init__(self,parent,baseData,nickname,processClass,fileName=None,redo=False,*args,**kargs):
 
         self.parent = parent
         self.nickname = nickname
         self.redo = redo
+        self.hierarchy = self.nickname
+        self.processClass = processClass
+        self.processObject = self.processClass(parent,*args,**kargs)
+        self.baseData = baseData
+        self.times = parent.times
 
         if not parent.nicknameDict.has_key(nickname):
             parent.nicknameDict[nickname] = self
@@ -682,14 +745,15 @@ class UnstructuredData(object):
             raise(Exception('nickname already taken'))
         parent.__setattr__(nickname,self)
 
-        if not self.__dict__.has_key('fileName'):
-            raise(Exception('unstructured data class needs filename'))
+        if fileName is None:
+            self.fileName = os.path.join(self.parent.dataDir,self.processClass.__name__+'.h5')
         else:
-            self.fileName = os.path.join(self.parent.dataDir,config['unstructuredDataDir'],self.fileName)
+            self.fileName = os.path.join(self.parent.dataDir,fileName+'.h5')
 
-        if not os.path.exists(os.path.dirname(self.fileName)):
-            print 'creating %s' %(os.path.dirname(self.fileName))
-            os.mkdir(os.path.dirname(self.fileName))
+        print 'instanciating unstructured data at file %s' %self.fileName
+
+
+        self.file = h5py.File(self.fileName)
 
         self.data = self.prepare(self.redo)
 
@@ -699,3 +763,94 @@ class UnstructuredData(object):
 
     def __set__(self,instance,value):
         raise(Exception('no setting possible!'))
+
+    def prepare(self,redo):
+
+        if self.hierarchy in self.file.keys():
+            if not redo:
+                return
+            else:
+                del self.file[self.hierarchy]
+
+        with DelayedKeyboardInterrupt():
+
+            tmpFile = self.file
+
+            tmpPrefix = self.nickname+'_'
+            tmpString = tmpPrefix + str(n.random.randint(0,1000000000000000,1)[0])
+            while tmpString in tmpFile.keys():
+                tmpString = tmpPrefix + str(n.random.randint(0,1000000000000000,1)[0])
+
+            tmpGroup = tmpFile.create_group(tmpString)
+
+            self.processObject.fromBaseData(self.baseData,tmpFile,tmpString)
+
+            tmpFile.move(tmpString,self.hierarchy)
+
+        return
+
+    def __getitem__(self,item,**kargs):
+        if type(item) == int:
+
+            if not (item in self.times):
+                raise(Exception('requested time %s not available in unstructured data with times %s' %(item,self.times)))
+
+            try:
+                res = self.processObject.getTimePoint(self.file,self.hierarchy,item)
+            except:
+                raise(Exception('problem getting timepoint'))
+        elif type(item) == str:
+            res = self.processObject.getString(self.file,self.hierarchy,item,self.baseData,**kargs)
+        else:
+            raise(Exception('wrong argument to __getitem__: %s' %item))
+
+        return res
+
+    def __len__(self):
+
+        try:
+            res = self.processObject.getLength(self.file,self.hierarchy)
+        except:
+            raise(Exception('problem getting length'))
+
+        return res
+
+class FromFile(object):
+
+    def __init__(self,parent, filePattern, fileSpacing=None, compression='jls',compressionOption=0):
+        print 'instanciating FromFile for %s' %filePattern
+        self.filePattern = filePattern
+        self.fileSpacing = fileSpacing
+        self.parent = parent
+        self.compression = compression
+        self.compressionOption = compressionOption
+        # self.timeOffset = timeOffset
+        return
+
+    def fromFrame(self,time,frame,tmpFile,tmpHierarchy):
+
+        tmpDict = dict()
+        tmpDict['time'] = time
+        tmpDict['wildcard'] = '.*'
+
+        listDir = os.listdir(os.path.dirname(self.filePattern))
+        tmpRe = re.compile(self.filePattern %tmpDict)
+        found = 0
+        for fileName in listDir:
+            fileName = os.path.join(os.path.dirname(self.filePattern),fileName)
+            if not tmpRe.match(fileName) is None:
+                found = 1
+                break
+
+        if not found: raise(Exception('could not find file for timepoint %s' %time))
+
+        sImage = sitk.ReadImage(fileName)
+        if not self.fileSpacing is None:
+            sImage.SetSpacing(self.fileSpacing)
+            sImage = stacking.space(sImage,spacing=self.parent.spacing)
+        tmpImage = sitk.gafi(sImage)
+
+        filing.toH5_hl(tmpImage.astype(n.uint16),tmpFile,hierarchy=tmpHierarchy,
+                       compression=self.compression,compressionOption=self.compressionOption)
+
+        return

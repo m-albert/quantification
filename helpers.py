@@ -4,7 +4,7 @@ __author__ = 'malbert'
 # delete key from h5s
 # keys = ['interaligned','interreg','intrareg','intraaligned','seg']
 # keys = ['skeletons_test_%s' %i for i in range(25)]
-keys = ['seg2','ms','ms_orig','seg']
+keys = ['signal']
 times = range(10)
 tmpBs = bs
 # for ii,i in enumerate(['/data/malbert/quantification/20150811_p2y12_4dpf_1min_%s.czi/raw_ch0' %j for j in [1,2,3,5,9,10,11,12,13,15,16]]):
@@ -54,6 +54,9 @@ for i in range(1):
 
 
 q = n.sum([(n.array(bs[i].objects[0]['labels'])>0).astype(n.uint16) for i in range(len(bs))],0).astype(n.float)
+projs = []
+for dim in range(3):
+    projs.append(n.max(q,dim))
 qmax = n.max(q,0)
 
 q2 = [(n.array(bs[i].objects[0]['labels'])>0).astype(n.uint16) for i in range(len(bs))]

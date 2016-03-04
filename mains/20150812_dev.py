@@ -48,10 +48,38 @@ for isample,sample in enumerate(samples):
 
     descriptors.IndependentChannel(b,b.ms,'objects',objects.Objects,redo=False)
 
-    descriptors.IndependentChannel(b,b.objects,'skeletons_0',objects.Skeletons,nDilations=0,redo=False)
-    # descriptors.IndependentChannel(b,b.skeletons_0,'hulls',objects.Hulls,redo=True)
+    descriptors.IndependentChannel(b,b.objects,'skeletons_0',objects.Skeletons,nDilations=3,redo=False)
+    # descriptors.IndependentChannel(b,b.skeletons_0,'hulls',objects.Hulls,redo=False)
 
     bs.append(b)
 
 # execfile('density.py')
-execfile('../movieScript.py')
+# execfile('../movieScript.py')
+
+for ib,b in enumerate(bs):
+    tmp = n.array(bs[ib].interaligned[0])[mask.slices]
+    obj = n.array(bs[ib].objects[0]['labels'])
+    lab = n.array(bs[ib].ms[0])
+    for i in range(3):
+        sitk.WriteImage(sitk.gifa([tmp,obj,lab][i].astype(n.uint16)),'%s/results/clicking/brain_%s_%s.tif' %(bs[0].dataDir,ib,i))
+
+
+
+# q = n.sum([(n.array(bs[i].hulls[0]['labels'])>0).astype(n.uint16) for i in range(len(bs))],0).astype(n.float)
+# q = [n.max(n.array(bs[0].hulls[it]['labels']),0) for it in range(len(b.times))]
+# projs = []
+# for dim in range(3):
+#     projs.append(n.max(q,dim))
+
+w = sitk.gafi(gm)[mask.slices]
+w = w*(w>0.1)
+w=sitk.Cast(sitk.gifa(w),6)
+
+for ivideo in range(8):
+    v = []
+    for it in range(10):
+        print it
+        v.append(sitk.gafi(sitk.Cast(sitk.gifa(n.array(bs[ivideo].interaligned[it])[mask.slices]),6)*w).astype(n.uint16))
+
+    res = n.array([n.max(i,0) for i in v])
+    sitk.WriteImage(sitk.gifa(res),'/home/malbert/delme/p2y12_wholebrain_4dpf_10timepoints_%s.tif' %ivideo)

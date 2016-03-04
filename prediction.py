@@ -31,7 +31,7 @@ class Prediction(descriptors.ChannelData):
 
         # self.dir = self.baseData.dir
 
-        self.trainingSamplesDir = os.path.join(self.dataDir,'training')
+        self.trainingSamplesDir = os.path.join(parent.dataDir,'training')
         if not os.path.exists(self.trainingSamplesDir): os.mkdir(self.trainingSamplesDir)
 
 
@@ -92,11 +92,12 @@ class Prediction(descriptors.ChannelData):
 
 class FilterSegmentation(descriptors.ChannelData):
 
-    def __init__(self,parent,baseData,nickname,*args,**kargs):
+    def __init__(self,parent,baseData,nickname,threshold=-50,*args,**kargs):
         print 'creating filter segmentation of %s' %(baseData.nickname)
 
         self.baseData = baseData
         self.hierarchy = nickname
+        self.threshold = threshold
         # self.dir = self.baseData.dir
         # self.fileNameFormat = self.baseData.fileNameFormat
 
@@ -133,19 +134,28 @@ class FilterSegmentation(descriptors.ChannelData):
         for itime,time in enumerate(toDoTimes):
 
             so = sitk.gifa(self.baseData[time])
-            # tmpRes = imaging.gaussian3d(so,(2,2,4.))
-            tmpRes = sitk.SmoothingRecursiveGaussian(so,2)
-            tmpRes = sitk.Laplacian(tmpRes)
-            tmpRes = sitk.Cast(tmpRes<-5,3)#*sitk.Cast(sitk.Abs(tmpRes),3)
+            tmpRes = laplaceFilter(so,gauss=[2,2,1],thresh=self.threshold)
+            # tmpRes = segmentLaplace(so,thresh=self.threshold,nErode = 2,nDilate = 10)
             tmpRes = sitk.gafi(tmpRes)
+            # tmpRes = imaging.gaussian3d(so,(2,2,4.))
 
-            tmpRes,N = ndimage.label(tmpRes)
-            tmpRes = imaging.mySizeFilter(tmpRes,5000,1000000000000)
+
+            # tmpRes = sitk.SmoothingRecursiveGaussian(so,2)
+            # tmpRes = sitk.Laplacian(tmpRes)
+            # tmpRes = sitk.Cast(tmpRes<-5,3)#*sitk.Cast(sitk.Abs(tmpRes),3)
+            # tmpRes = sitk.gafi(tmpRes)
+
+
+
+            #tmpRes,N = ndimage.label(tmpRes)
+            #tmpRes = imaging.mySizeFilter(tmpRes,5000,1000000000000)
 
             # filing.toH5(tmpRes.astype(n.uint16),self.baseData[time].file.filename,hierarchy=self.nickname,
             #             compression='jls',compressionOption=0)
+            # filing.toH5_hl(tmpRes.astype(n.uint16),self.parent[time],hierarchy=self.hierarchy,
+            #             compression='jls',compressionOption=0)
             filing.toH5_hl(tmpRes.astype(n.uint16),self.parent[time],hierarchy=self.hierarchy,
-                        compression='jls',compressionOption=0)
+                           )
 
             # tmpFile = h5py.File(self.baseData[time].file.filename)
             # tmpFile[self.nickname] = tmpRes
@@ -223,3 +233,157 @@ class MaskedSegmentation(descriptors.ChannelData):
             outDict[time] = True
 
         return outDict
+
+@descriptors.imageFormat(sitk.Image)
+def laplaceFilterOld(so,gauss=2,thresh=-5):
+    tmpRes = sitk.SmoothingRecursiveGaussian(so,gauss)
+    tmpRes = sitk.Laplacian(tmpRes)
+    tmpRes = sitk.Cast(tmpRes<thresh,3)#*sitk.Cast(sitk.Abs(tmpRes),3)
+    # tmpRes = sitk.gafi(tmpRes)
+    return tmpRes
+
+@descriptors.imageFormat(sitk.Image)
+def laplaceFilter(so,gauss=[2,2,1.],thresh=-5):
+    tmpRes = imaging.gaussian3d(so,gauss)
+    # tmpRes = sitk.SmoothingRecursiveGaussian(so,gauss)
+    tmpRes = sitk.Laplacian(tmpRes)
+    tmpRes = sitk.Cast(tmpRes<thresh,3)#*sitk.Cast(sitk.Abs(tmpRes),3)
+    # tmpRes = sitk.gafi(tmpRes)
+    return tmpRes
+
+@descriptors.imageFormat(sitk.Image)
+def segmentIntensity(im,thresh=500,nErode=1,nDilate=3):
+
+    im = im>thresh
+    # im = sitk.gifa(im.astype(n.uint16))
+    # im = sitk.BinaryErode(im,1)
+    # im = sitk.BinaryDilate(im,1)
+    # im = sitk.BinaryDilate(im,nDil)
+    # im = sitk.BinaryErode(im,nDil)
+
+    im = imaging.sitk2d(im,sitk.BinaryErode,nErode)
+    im = imaging.sitk2d(im,sitk.BinaryDilate,nErode)
+    im = imaging.sitk2d(im,sitk.BinaryDilate,nDilate)
+    im = imaging.sitk2d(im,sitk.BinaryErode,nDilate)
+
+    im = sitk.gafi(im)
+    l,N = ndimage.label(im)
+    l = sitk.gifa(l.astype(n.uint16))
+
+    return l
+
+@descriptors.imageFormat(sitk.Image)
+def segmentLaplace(im,gauss=[2,2,2],thresh=-50,nErode=1,nDilate=3):
+
+    # pdb.set_trace()
+    im = laplaceFilter(im,gauss,thresh)
+    # im = sitk.BinaryErode(im,nErode)
+    # im = sitk.BinaryDilate(im,nErode)
+    # im = sitk.BinaryDilate(im,nDilate)
+    # im = sitk.BinaryErode(im,nDilate)
+
+    im = imaging.sitk2d(im,sitk.BinaryErode,nErode)
+    im = imaging.sitk2d(im,sitk.BinaryDilate,nErode)
+    im = imaging.sitk2d(im,sitk.BinaryDilate,nDilate)
+    im = imaging.sitk2d(im,sitk.BinaryErode,nDilate)
+
+    # im = imaging.sitk2d(im,sitk.BinaryFillhole)
+
+    im = sitk.gafi(im)
+    l,N = ndimage.label(im)
+    l = sitk.gifa(l.astype(n.uint16))
+
+    return l
+
+
+@descriptors.imageFormat(sitk.Image)
+def segmentFromFilter(im,gauss=[2,2,1],nErode=2,nDilate=2):
+
+    im = im>0
+
+    im = imaging.sitk2d(im,sitk.BinaryErode,nErode)
+    im = imaging.sitk2d(im,sitk.BinaryDilate,nErode)
+    im = imaging.sitk2d(im,sitk.BinaryDilate,nDilate)
+    im = imaging.sitk2d(im,sitk.BinaryErode,nDilate)
+
+    # im = imaging.sitk2d(im,sitk.BinaryFillhole)
+
+    im = sitk.gafi(im)
+    l,N = ndimage.label(im)
+    l = sitk.gifa(l.astype(n.uint16))
+
+    return l
+
+def divergence(F):
+    """ compute the divergence of n-D scalar field `F` """
+    return reduce(n.add,n.gradient(F))
+
+
+def edgePotential(im,alpha=300,beta=500):
+    im = sitk.SmoothingRecursiveGaussian(im,0.3)
+    # im = sitk.SmoothingRecursiveGaussian(im,g)
+    im = sitk.Laplacian(im)
+    import stacking
+    # for deconvolved images
+    im = sitk.Abs(sitk.Cast(im,6)*sitk.Cast((im<0),6))
+    im = stacking.scale(im)
+    # pdb.set_trace()
+    # im = sitk.Sigmoid(im,
+    #                    alpha=alpha,
+    #                    beta=beta,
+    #                    outputMaximum=1.0,
+    #                    outputMinimum=0.0)
+    # im = -im
+    return im
+
+def initialEdges(im,pixelPositions,radius=1):
+    fm = sitk.gifa(n.ones(im.GetSize()[::-1],dtype=n.float))
+    fm.SetSpacing(im.GetSpacing())
+    posList = []
+    for ipos in range(len(pixelPositions)):
+        posList.append(pixelPositions[ipos])
+
+    # pdb.set_trace()
+    seeds = sitk.VectorUIntList(posList)
+    fm = sitk.FastMarching(fm,
+                      trialPoints = seeds,
+                      normalizationFactor=1.,
+                      stoppingValue=radius)
+    fm = fm<1000
+    # fm = sitk.BinaryDilate(fm)-fm
+    fm = sitk.SignedMaurerDistanceMap(fm)
+    # fm = sitk.BinaryNot(fm)
+
+    return fm
+
+def activeContours(initial,edges,propagationScaling=1.,curvatureScaling=0.05,advectionScaling=2,iterations=2000):
+    geo = sitk.GeodesicActiveContourLevelSet(
+                              sitk.Cast(initial,6),
+                              sitk.Cast(edges,6),
+                              maximumRMSError=0.02,
+                              # propagationScaling=propagationScaling,
+                              propagationScaling=propagationScaling,
+                              curvatureScaling=curvatureScaling,
+                              advectionScaling=advectionScaling,
+                              numberOfIterations=iterations,
+                              reverseExpansionDirection=False)
+    return geo
+
+@descriptors.imageFormat(sitk.Image)
+def laplace2d(im):
+    res = []
+    for iz in range(im.GetSize()[2]):
+        tmp = sitk.SmoothingRecursiveGaussian(im[:,:,iz],0.3)
+        tmp = sitk.gafi(sitk.Laplacian(tmp))
+        res.append(tmp)
+    res = sitk.gifa(n.array(res))
+    return res
+
+
+if __name__=="__main__":
+
+    tmpRes = sitk.SmoothingRecursiveGaussian(so,2)
+    tmpRes = sitk.Laplacian(tmpRes)
+    tmpRes = sitk.Cast(tmpRes<-5,3)#*sitk.Cast(sitk.Abs(tmpRes),3)
+    tmpRes = sitk.gafi(tmpRes)
+

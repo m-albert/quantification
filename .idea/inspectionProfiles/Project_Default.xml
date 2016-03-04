@@ -22,6 +22,7 @@
           <option value="movieScript.ndimage" />
           <option value="movieScript.n" />
           <option value="mains.test.sitk" />
+          <option value="mains.gcamp20150318.sitk" />
         </list>
       </option>
     </inspection_tool>

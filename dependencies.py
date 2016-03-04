@@ -18,6 +18,7 @@ if sys.platform == 'darwin':
     sys.path.append('/Users/malbert/Documents/software/trackpy')
     tmpDir = os.path.join('/tmp','quantificationTmpFolder_%s' %timestamp)
     elastixPath = '/Users/malbert/Documents/software/elastix_macosx64_v4.8/bin/elastix'
+    transformixPath = '/Users/malbert/Documents/software/elastix_macosx64_v4.8/bin/transformix'
     fijiPath = 'fiji'
 
 elif sys.platform == 'linux2':
@@ -28,9 +29,13 @@ elif sys.platform == 'linux2':
     sys.path.append('/home/malbert/software/fusion/dependencies_linux/SimpleITKcurrent')
     tmpDir = os.path.join('/data/malbert/tmp','quantificationTmpFolder_%s' %timestamp)
     elastixPath = '/home/malbert/bin/elastix'
+    transformixPath = '/home/malbert/bin/transformix'
     fijiPath = '/home/malbert/software/fiji/Fiji/ImageJ-linux64'
 
-import ilastiking,filing,imaging
+# import stacking.scale
+# import imaging.sizeFilter
+
+import ilastiking,filing,imaging,stacking
 import transformations
 import tifffile
 import trackpy
@@ -56,15 +61,21 @@ import numpy as n
 from scipy import ndimage,spatial,cluster,interpolate
 import random
 
+curDir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(curDir)
+
+import morphsnakes
+
 import misc
 import brain
 import descriptors
-import registration
+import objects
 import prediction
+import registration
 import segmentation
 import tracking
 import activity
-import objects
+
 
 ar = n.array
 

@@ -22,10 +22,9 @@ class RegistrationParameters(descriptors.ChannelData):
         self.baseData = baseData
         self.hierarchy = nickname
 
-        # self.dir = self.baseData.dir
         self.fileNameFormat = parent.fileNameFormat
 
-        self.validTimes = range(parent.dimt)
+        self.validTimes = self.baseData.validTimes
 
         self.reference = reference
         self.initialRegistration = initialRegistration
@@ -204,11 +203,134 @@ class RegistrationParameters(descriptors.ChannelData):
         os.remove(outFileRefRaw)
         return outDict
 
+class GenericRegistration(descriptors.ChannelData):
+
+    nickname = 'registrationParams'
+
+    def __init__(self,parent,baseData,nickname,
+                 elastixStrings = None,
+                 maskData = None,
+                 dilationRadius = 0,
+                 *args,**kargs):
+
+        print 'creating registration channel with nickname %s' %nickname
+
+        self.baseData = baseData
+        self.hierarchy = nickname
+
+        self.fileNameFormat = parent.fileNameFormat
+
+        self.validTimes = self.baseData.validTimes
+
+        self.maskData = maskData,
+        self.dilationRadius = dilationRadius
+        self.elastixStrings = elastixStrings
+
+        self.relShape = None
+
+        super(GenericRegistration,self).__init__(parent,nickname,*args,**kargs)
+
+        self.timepointClass = h5py.Dataset
+
+
+    def prepareTimepoints(self,times,redo):
+
+        outDict = dict()
+
+        alreadyDoneTimes, toDoTimes = [],[]
+        for itime,time in enumerate(times):
+            # tmpFile = h5py.File(self.baseData.getFileName(time))
+            tmpFile = self.parent[time]
+            if self.hierarchy in tmpFile.keys():
+                if redo:
+                    del tmpFile[self.hierarchy]
+                    toDoTimes.append(time)
+                else:
+                    alreadyDoneTimes.append(time)
+                    outDict[time] = True
+            else:
+                toDoTimes.append(time)
+
+        print 'already prepared: %s\nto prepare: %s\n' %(alreadyDoneTimes,toDoTimes)
+
+        if not len(toDoTimes): return outDict
+        import beads
+        dsfs = self.parent.spacing[2]/self.parent.spacing
+        # dsfs = n.array([2.,2,1])
+        for itime,time in enumerate(toDoTimes):
+            # pdb.set_trace()
+            if not time:
+                tmpIm = n.array(self.baseData[time])
+                tmpIm = sitk.gafi(beads.scaleStack(dsfs[::-1],sitk.gifa(tmpIm)))
+                ims = [tmpIm for i in self.elastixStrings]
+                defo = n.zeros(tmpIm.shape+(3,)).astype(n.uint16)
+
+            else:
+
+                time_ref = self.validTimes[self.validTimes.index(time)-1]
+
+                tmpRes = sitk.gifa(self.baseData[time])
+                # tmpRes.SetSpacing(self.spacing)
+                tmpRes = beads.scaleStack(dsfs[::-1],tmpRes)
+                tmpRes.SetSpacing(self.spacing*dsfs)
+
+                tmpRef = sitk.gifa(self.parent[time_ref][self.hierarchy]['im%s' %(len(self.elastixStrings)-1)])
+                #tmpRef.SetSpacing(self.spacing)
+
+                # tmpRef = beads.scaleStack(dsfs[::-1],tmpRef)
+                tmpRef.SetSpacing(self.spacing*dsfs)
+
+                fMask = prediction.laplaceFilter(tmpRef)
+                mMask = prediction.laplaceFilter(tmpRes)
+                fMask.SetSpacing(self.spacing*dsfs)
+                mMask.SetSpacing(self.spacing*dsfs)
+
+                if self.dilationRadius:
+                    fMask = sitk.BinaryDilate(fMask,self.dilationRadius)
+                    mMask = sitk.BinaryDilate(mMask,self.dilationRadius)
+
+                tmpImportsDict = dict()
+                tmpImportsDict['elastixDir'] = elastixPath
+                tmpImportsDict['transformixDir'] = transformixPath
+                tmpImportsDict['tmpDir'] = tmpDir
+
+                ims = []
+                for ielastixString,elastixString in enumerate(self.elastixStrings):
+                    tmpRes,defo = imaging.genericElastix(tmpRef,
+                                                            tmpRes,
+                                                            tmpImportsDict,
+                                                            [self.elastixStrings[ielastixString]],
+                                                            getDefo = int(ielastixString==(len(self.elastixStrings)-1)),
+                                                            fMask = fMask,
+                                                            mMask = mMask
+                                                            )
+                    # pdb.set_trace()
+                    ims.append(sitk.gafi(tmpRes))
+                defo = sitk.gafi(defo)
+
+            tmpFile = self.parent[time]
+
+            defor = n.sqrt(n.sum([n.power(n.array(defo[:,:,:,i]),2) for i in range(3)],0))
+            filing.toH5_hl((defor*1000+n.power(2,15)).astype(n.uint16),tmpFile,hierarchy=os.path.join(self.hierarchy,'defo'),compression='jls')
+
+            for ielastixString,elastixString in enumerate(self.elastixStrings):
+                filing.toH5_hl(ims[ielastixString].astype(n.uint16),tmpFile,hierarchy=os.path.join(self.hierarchy,'im%s' %ielastixString),compression='jls')
+
+            # if not (defo is None):
+            for idim in range(3):
+                filing.toH5_hl((defo[:,:,:,idim]*1000+n.power(2,15)).astype(n.uint16),tmpFile,hierarchy=os.path.join(self.hierarchy,'defo%s' %idim),compression='jls')
+
+            outDict[time] = True
+            alreadyDoneTimes.append(time)
+
+            # self.baseData.close(time)
+
+        return outDict
 
 class Transformation(descriptors.ChannelData):
 
     def __init__(self,parent,baseData,paramsData,nickname,interpolation=sitk.sitkLinear,mask=None,filterTimes=None,offset=None,*args,**kargs):
-        print 'creating transformation channel of %s using %s and mask %s' %(baseData.nickname,paramsData.nickname,mask)
+        print 'creating transformation channel of %s using %s and mask %s' %(baseData.nickname,paramsData,mask)
 
         self.baseData = baseData
         self.paramsData = paramsData
@@ -263,7 +385,9 @@ class Transformation(descriptors.ChannelData):
 
         if not len(toDoTimes): return outDict
 
-        if type(self.paramsData.reference) == int:
+        if type(self.paramsData) in [list,n.ndarray]:
+            refIm = None
+        elif type(self.paramsData.reference) == int:
             refIm = sitk.gifa(self.baseData[0])
             refIm.SetSpacing(self.baseData.spacing)
             refIm.SetOrigin(self.baseData.origin)
@@ -272,18 +396,24 @@ class Transformation(descriptors.ChannelData):
         else: refIm = self.paramsData.reference
 
         for itime,time in enumerate(toDoTimes):
-            print "transforming basedata %s with params %s, time %06d" %(self.baseData.nickname,self.paramsData.nickname,time)
+            # print "transforming basedata %s with params %s, time %06d" %(self.baseData.nickname,self.paramsData.nickname,time)
 
             tmpIm = sitk.gifa(self.baseData[time])
             tmpIm.SetSpacing(self.baseData.spacing)
             tmpIm.SetOrigin(self.baseData.origin)
 
-            tmpParams = n.array(self.paramsData[time])
+            if type(self.paramsData) in [list,n.ndarray] and not n.iterable(self.paramsData[0]):
+                tmpParams = n.array(self.paramsData)
+            else:
+                tmpParams = n.array(self.paramsData[time])
             # pdb.set_trace()
+
             changedParams = n.zeros(12)
             changedParams[:] = tmpParams
             if not (self.offset is None):
                 changedParams[9:] += self.offset
+
+            # pdb.set_trace()
             tmpRes = transformStackAndRef(changedParams,tmpIm,refIm,interpolation=self.interpolation)
 
             # if not (self.mask is None):
@@ -291,7 +421,8 @@ class Transformation(descriptors.ChannelData):
 
             # pdb.set_trace()
 
-            tmpRes = tmpRes[0:self.paramsData.relShape[0],0:self.paramsData.relShape[1],0:self.paramsData.relShape[2]]
+            if type(self.paramsData) == RegistrationParameters:
+                tmpRes = tmpRes[0:self.paramsData.relShape[0],0:self.paramsData.relShape[1],0:self.paramsData.relShape[2]]
             # tmpRes.SetSpacing((1,1,1.))
             # tmpRes.SetOrigin((0,0,0.))
             tmpRes = sitk.gafi(tmpRes)
@@ -303,7 +434,10 @@ class Transformation(descriptors.ChannelData):
             # tmpFile = h5py.File(self.baseData[time].file.filename)
             tmpFile = self.parent[time]
 
-            filing.toH5_hl(tmpRes,tmpFile,hierarchy=self.hierarchy,
+            # filing.toH5_hl(tmpRes,tmpFile,hierarchy=self.hierarchy,
+            #                compression=self.compression,compressionOption=self.compressionOption)
+
+            filing.toH5(tmpRes,tmpFile,hierarchy=self.hierarchy,
                            compression=self.compression,compressionOption=self.compressionOption)
 
             # tmpFile[self.nickname] = tmpRes
@@ -319,7 +453,8 @@ def transformStackAndRef(p,stack,refStack,interpolation=sitk.sitkLinear):
     # can handle composite transformations (len(p)%12)
     newim = transformStack(p,stack,interpolation=interpolation)
     if not (refStack is None):
-        newim = sitk.Resample(newim,refStack)
+        transform = sitk.Transform()
+        newim = sitk.Resample(newim,refStack,transform,interpolation)
     return newim
 
 def transformStack(p,stack,outShape=None,outSpacing=None,outOrigin=None,interpolation=sitk.sitkLinear):
@@ -656,6 +791,9 @@ def getParamsFromElastixCompose(images,initialParams = None,
         subprocess.Popen(cmd).wait()
 
     return
+
+
+
 
 
 elastixInitialTransformTemplateString = """
@@ -1129,143 +1267,404 @@ elastixParameterTemplateStringNonRigid = \
 
 """
 
-elastixParameterTemplateStringNonRigidWithPenalty = \
-"""
-// Description
-// Stage: non-rigid
-//
-// Author:      Roy van Pelt
-// Affiliation: Eindhoven University of Technology
-// Year:        2013
+elastixParameterTemplateStringNonRigidRigidityPenalty1 = """
+// Description: affine
+(RequiredRatioOfValidSamples 0.05)
+(InitialTransformParametersFileName "None")
+(Transform "BSplineTransform")
+(GradientMagnitudeTolerance 1e-7)
+(NumberOfResolutions 1)
 
-// ********** Image Types
+(FinalGridSpacingInPhysicalUnits 1.0 1.0 1.0)
 
+(ImagePyramidSchedule 1 1 1)
+
+//ImageTypes
 (FixedInternalImagePixelType "float")
 (FixedImageDimension 3)
 (MovingInternalImagePixelType "float")
 (MovingImageDimension 3)
+(UseDirectionCosines "false")
 
-
-// ********** Components
-
-(Metric "AdvancedMattesMutualInformation" "TransformRigidityPenalty")
-(Metric0Weight 0.5)
-(Metric1Weight 0.5)
-
+//Components
 (Registration "MultiMetricMultiResolutionRegistration")
-//(FixedImagePyramid "FixedRecursiveImagePyramid")
-(FixedImagePyramid "FixedSmoothingImagePyramid")
-(MovingImagePyramid "MovingSmoothingImagePyramid")
-//(MovingImagePyramid "MovingRecursiveImagePyramid")
+(FixedImagePyramid "FixedRecursiveImagePyramid")
+(MovingImagePyramid "MovingRecursiveImagePyramid")
 (Interpolator "BSplineInterpolator")
-//(Metric "AdvancedMattesMutualInformation")
+(Metric "AdvancedMattesMutualInformation" "TransformRigidityPenalty")
+(Metric0Weight 0.7)
+(Metric1Weight 0.3)
 
-(Optimizer "AdaptiveStochasticGradientDescent")
-//(Optimizer "QuasiNewtonLBFGS")
-//(GradientMagnitudeTolerance 1e-6)
+(UseLinearityCondition "true")
+(UsePropernessCondition "false")
+(UseOrthonormalityCondition "true")
+(CalculatePropernessCondition "false")
+(CalculateLinearityCondition "false")
+(OrthonormalityConditionWeight 1.0)
+(PropernessConditionWeight 1.0)
+
+
+//(OrthonormalityConditionWeight 1.0)
+//(PropernessConditionWeight 100.0)
+//(MovingRigidityImageName "malbertMovingRigidityImageName")
+
+(Optimizer "QuasiNewtonLBFGS")
+//(Optimizer ConjugateGradient)
+
+//(StopIfWolfeNotSatisfied "false")
 
 (ResampleInterpolator "FinalBSplineInterpolator")
 (Resampler "DefaultResampler")
-(Transform "BSplineTransform")
 
-
-// ********** Pyramid
-
-// Total number of resolutions
-(NumberOfResolutions 3)
-(ImagePyramidSchedule 16 16 16 8 8 8 4 4 4)
-//(MovingImagePyramidSchedule 4 4 4 2 2 2 1 1 1)
-//(FixedImagePyramidSchedule 16 16 16 8 8 8 4 4 4)
-
-
-// ********** Transform
-
-//(GridSpacingSchedule 8 8 8 4 4 4 2 2 2)
-(FinalGridSpacingInPhysicalUnits 50 50 50)
-//(GridSpacingSchedule 8 8 8 4 4 4 1 1 1)
+(ErodeMask "false" )
 
 (HowToCombineTransforms "Compose")
-
-
-// ********** Optimizer
-
-// Maximum number of iterations in each resolution level:
-//(MaximumNumberOfIterations 300 200 100)
-
-//(MaximumNumberOfIterations 1000 500 250)
-//(MaximumNumberOfIterations 2000 1000 500)
-(MaximumNumberOfIterations 2000 1000 500)
-
-
-//(MaximumNumberOfIterations 3000 1500 750)
-
-(AutomaticParameterEstimation "true")
-(UseAdaptiveStepSizes "true")
-(NumberOfHistogramBins 64 64)
-(NumberOfFixedHistogramBins 64 64)
-(NumberOfMovingHistogramBins 64 64)
-
-
-//(NumberOfGradientMeasurements 0)
-//(NumberOfJacobianMeasurements 4056)
-//(NumberOfBandStructureSamples 10)
-//(MaximumStepLength 2.29829)
-//(MaxBandCovSize 192)
-//(SigmoidInitialTime 0 0 0)
-//(SigmoidScaleFactor 0.1)
-
-
-// ********** Several
+(AutomaticTransformInitialization "false")
+(AutomaticScalesEstimation "false")
 
 (WriteTransformParametersEachIteration "false")
-(WriteTransformParametersEachResolution "false")
-(WriteResultImageAfterEachResolution "false")
-(WritePyramidImagesAfterEachResolution "false")
+(WriteResultImage "false")
+(CompressResultImage "false")
 (ShowExactMetricValue "false")
-(ErodeFixedMask "false" "false")
-(ErodeMovingMask "false" "false")
-(UseDirectionCosines "true")
-(FixedLimitRangeRatio 0.01 0.01)
-(MovingLimitRangeRatio 0.01 0.01)
-(UseFastAndLowMemoryVersion "true")
-//(SP_A 20.0 )
 
+//Maximum number of iterations in each resolution level:
+//(MaximumNumberOfIterations 500)
 
-// ********** ImageSampler
+//Number of grey level bins in each resolution level:
+(NumberOfHistogramBins 64)
 
-//Number of spatial samples used to compute the mutual information in each resolution level:
-(ImageSampler "RandomCoordinate")
-//(ImageSampler "Full")
-(CheckNumberOfSamples "false" "false" "false")
-(NumberOfSpatialSamples 2048 4096 4096)
-//(NumberOfSpatialSamples 8096 16384 16384)
-
-(NumberOfSamplesForSelfHessian 10000)
-(NumberOfSamplesForExactGradient 10000)
-(NewSamplesEveryIteration "true")
-(UseRandomSampleRegion "false")
-(MaximumNumberOfSamplingAttempts 0 0 0)
-
-
-// ********** Interpolator and Resampler
+(ImageSampler "Full")
 
 //Order of B-Spline interpolation used in each resolution level:
-(BSplineInterpolationOrder 1 1 1)
-(FixedImageBSplineInterpolationOrder 1 1 1)
-(MovingImageBSplineInterpolationOrder 1 1 1)
-(FixedKernelBSplineOrder 3 3 3) // 0 for binary
-(MovingKernelBSplineOrder 3 3 3)
+(BSplineInterpolationOrder 1)
+
+(FixedKernelBSplineOrder 3 3) // 0 for binary
+(MovingKernelBSplineOrder 3 3)
 
 //Order of B-Spline interpolation used for applying the final deformation:
 (FinalBSplineInterpolationOrder 3)
 
+(FixedImageBSplineInterpolationOrder 1)
+(MovingImageBSplineInterpolationOrder 1)
+
 //Default pixel value for pixels that come from outside the picture:
 (DefaultPixelValue 0)
 
+//(MaximumStepLength 4.0)
+(ResultImagePixelType "short")
+(ResultImageFormat "mhd")
+"""
+
+elastixParameterTemplateStringNonRigidRigidityPenalty20 = """
+// Description: affine
+(RequiredRatioOfValidSamples 0.05)
+(InitialTransformParametersFileName "None")
+(Transform "BSplineTransform")
+(GradientMagnitudeTolerance 1e-7)
+(NumberOfResolutions 1)
+
+(FinalGridSpacingInPhysicalUnits 20.0 20.0 20.0)
+
+(ImagePyramidSchedule 2 2 2)
+
+//ImageTypes
+(FixedInternalImagePixelType "float")
+(FixedImageDimension 3)
+(MovingInternalImagePixelType "float")
+(MovingImageDimension 3)
+(UseDirectionCosines "false")
+
+//Components
+(Registration "MultiMetricMultiResolutionRegistration")
+(FixedImagePyramid "FixedRecursiveImagePyramid")
+(MovingImagePyramid "MovingRecursiveImagePyramid")
+(Interpolator "BSplineInterpolator")
+(Metric "AdvancedMattesMutualInformation" "TransformRigidityPenalty")
+(Metric0Weight 0.7)
+(Metric1Weight 0.3)
+
+(UseLinearityCondition "true")
+(UsePropernessCondition "false")
+(UseOrthonormalityCondition "true")
+(CalculatePropernessCondition "false")
+(CalculateLinearityCondition "false")
+(OrthonormalityConditionWeight 1.0)
+(PropernessConditionWeight 1.0)
+
+
+//(OrthonormalityConditionWeight 1.0)
+//(PropernessConditionWeight 100.0)
+//(MovingRigidityImageName "malbertMovingRigidityImageName")
+
+(Optimizer "QuasiNewtonLBFGS")
+//(Optimizer ConjugateGradient)
+
+//(StopIfWolfeNotSatisfied "false")
+
+(ResampleInterpolator "FinalBSplineInterpolator")
+(Resampler "DefaultResampler")
+
+(ErodeMask "false" )
+
+(HowToCombineTransforms "Compose")
+(AutomaticTransformInitialization "false")
+(AutomaticScalesEstimation "false")
+
+(WriteTransformParametersEachIteration "false")
 (WriteResultImage "false")
 (CompressResultImage "false")
+(ShowExactMetricValue "false")
 
-// The pixel type and format of the resulting deformed moving image
-(ResultImagePixelType "float")
+//Maximum number of iterations in each resolution level:
+//(MaximumNumberOfIterations 500)
+
+//Number of grey level bins in each resolution level:
+(NumberOfHistogramBins 64)
+
+(ImageSampler "Full")
+
+//Order of B-Spline interpolation used in each resolution level:
+(BSplineInterpolationOrder 1)
+
+(FixedKernelBSplineOrder 3 3) // 0 for binary
+(MovingKernelBSplineOrder 3 3)
+
+//Order of B-Spline interpolation used for applying the final deformation:
+(FinalBSplineInterpolationOrder 3)
+
+(FixedImageBSplineInterpolationOrder 1)
+(MovingImageBSplineInterpolationOrder 1)
+
+//Default pixel value for pixels that come from outside the picture:
+(DefaultPixelValue 0)
+
+//(MaximumStepLength 4.0)
+(ResultImagePixelType "short")
+(ResultImageFormat "mhd")
+"""
+
+
+elastixParameterTemplateStringNonRigidRigidityPenalty100 = """
+// Description: affine
+(RequiredRatioOfValidSamples 0.05)
+(InitialTransformParametersFileName "None")
+(Transform "BSplineTransform")
+(GradientMagnitudeTolerance 1e-7)
+(NumberOfResolutions 2)
+
+(FinalGridSpacingInPhysicalUnits 100.0 100.0 100.0)
+
+(ImagePyramidSchedule 10 10 10  4 4 4)
+
+//ImageTypes
+(FixedInternalImagePixelType "float")
+(FixedImageDimension 3)
+(MovingInternalImagePixelType "float")
+(MovingImageDimension 3)
+(UseDirectionCosines "false")
+
+//Components
+(Registration "MultiMetricMultiResolutionRegistration")
+(FixedImagePyramid "FixedRecursiveImagePyramid")
+(MovingImagePyramid "MovingRecursiveImagePyramid")
+(Interpolator "BSplineInterpolator")
+(Metric "AdvancedMattesMutualInformation" "TransformRigidityPenalty")
+(Metric0Weight 0.7)
+(Metric1Weight 0.3)
+
+(UseLinearityCondition "true")
+(UsePropernessCondition "false")
+(UseOrthonormalityCondition "true")
+(CalculatePropernessCondition "false")
+(CalculateLinearityCondition "false")
+(OrthonormalityConditionWeight 1.0)
+(PropernessConditionWeight 1.0)
+
+
+//(OrthonormalityConditionWeight 1.0)
+//(PropernessConditionWeight 100.0)
+//(MovingRigidityImageName "malbertMovingRigidityImageName")
+
+(Optimizer "QuasiNewtonLBFGS")
+//(Optimizer ConjugateGradient)
+
+//(StopIfWolfeNotSatisfied "false")
+
+(ResampleInterpolator "FinalBSplineInterpolator")
+(Resampler "DefaultResampler")
+
+(ErodeMask "false" )
+
+(HowToCombineTransforms "Compose")
+(AutomaticTransformInitialization "false")
+(AutomaticScalesEstimation "false")
+
+(WriteTransformParametersEachIteration "false")
+(WriteResultImage "false")
+(CompressResultImage "false")
+(ShowExactMetricValue "false")
+
+//Maximum number of iterations in each resolution level:
+//(MaximumNumberOfIterations 500)
+
+//Number of grey level bins in each resolution level:
+(NumberOfHistogramBins 64)
+
+(ImageSampler "Full")
+
+//Order of B-Spline interpolation used in each resolution level:
+(BSplineInterpolationOrder 1)
+
+(FixedKernelBSplineOrder 3 3) // 0 for binary
+(MovingKernelBSplineOrder 3 3)
+
+//Order of B-Spline interpolation used for applying the final deformation:
+(FinalBSplineInterpolationOrder 3)
+
+(FixedImageBSplineInterpolationOrder 1)
+(MovingImageBSplineInterpolationOrder 1)
+
+//Default pixel value for pixels that come from outside the picture:
+(DefaultPixelValue 0)
+
+//(MaximumStepLength 4.0)
+(ResultImagePixelType "short")
+(ResultImageFormat "mhd")
+"""
+
+
+
+elastixParameterTemplateStringNonRigid = """
+// Description: affine
+(RequiredRatioOfValidSamples 0.05)
+(Transform "BSplineTransform")
+(GradientMagnitudeTolerance 1e-7)
+(NumberOfResolutions 2)
+(InitialTransformParametersFileName "None")
+(FinalGridSpacingInPhysicalUnits 50.0 50.0 50.0)
+
+(ImagePyramidSchedule  10 10 10  5 5 5)
+
+//ImageTypes
+(FixedInternalImagePixelType "float")
+(FixedImageDimension 3)
+(MovingInternalImagePixelType "float")
+(MovingImageDimension 3)
+(UseDirectionCosines "false")
+
+//Components
+(Registration "MultiResolutionRegistration")
+(FixedImagePyramid "FixedRecursiveImagePyramid")
+(MovingImagePyramid "MovingRecursiveImagePyramid")
+(Interpolator "BSplineInterpolator")
+(Metric "AdvancedMattesMutualInformation")
+
+(Optimizer "QuasiNewtonLBFGS")
+//(Optimizer ConjugateGradient)
+
+//(StopIfWolfeNotSatisfied "false")
+
+(ResampleInterpolator "FinalBSplineInterpolator")
+(Resampler "DefaultResampler")
+
+(ErodeMask "false" )
+
+(HowToCombineTransforms "Compose")
+(AutomaticTransformInitialization "false")
+(AutomaticScalesEstimation "false")
+
+(WriteTransformParametersEachIteration "false")
+(WriteResultImage "false")
+(CompressResultImage "false")
+(ShowExactMetricValue "false")
+
+//Maximum number of iterations in each resolution level:
+//(MaximumNumberOfIterations 500)
+
+//Number of grey level bins in each resolution level:
+(NumberOfHistogramBins 64)
+
+(ImageSampler "Full")
+
+//Order of B-Spline interpolation used in each resolution level:
+(BSplineInterpolationOrder 1)
+
+(FixedKernelBSplineOrder 3 3) // 0 for binary
+(MovingKernelBSplineOrder 3 3)
+
+//Order of B-Spline interpolation used for applying the final deformation:
+(FinalBSplineInterpolationOrder 3)
+
+(FixedImageBSplineInterpolationOrder 1)
+(MovingImageBSplineInterpolationOrder 1)
+
+//Default pixel value for pixels that come from outside the picture:
+(DefaultPixelValue 0)
+
+//(MaximumStepLength 4.0)
+(ResultImagePixelType "short")
+(ResultImageFormat "mhd")
+"""
+
+elastixParameterTemplateStringAffineBeforeNonRigid = """
+// Description: affine
+(RequiredRatioOfValidSamples 0.05)
+
+(Transform "AffineTransform")
+(GradientMagnitudeTolerance 1e-7)
+(NumberOfResolutions 3)
+
+//(ImagePyramidSchedule  8 8 2  4 4 1  2 2 1 )
+(ImagePyramidSchedule  10 10 10  4 4 4  2 2 2)
+
+//ImageTypes
+(FixedInternalImagePixelType "float")
+(FixedImageDimension 3)
+(MovingInternalImagePixelType "float")
+(MovingImageDimension 3)
+(UseDirectionCosines "false")
+
+//Components
+(Registration "MultiResolutionRegistration")
+(FixedImagePyramid "FixedRecursiveImagePyramid")
+//(Registration "MultiMetricMultiResolutionRegistration")
+(MovingImagePyramid "MovingRecursiveImagePyramid")
+(Interpolator "BSplineInterpolator")
+(Metric "AdvancedMattesMutualInformation")
+
+(Optimizer "QuasiNewtonLBFGS")
+//(Optimizer ConjugateGradient)
+
+(ResampleInterpolator "FinalBSplineInterpolator")
+(Resampler "DefaultResampler")
+
+(ErodeMask "false" )
+
+(HowToCombineTransforms "Compose")
+(AutomaticTransformInitialization "false")
+(AutomaticScalesEstimation "true")
+//(AutomaticTransformInitializationMethod "CenterOfGravity" )
+
+(WriteTransformParametersEachIteration "false")
+(WriteResultImage "false")
+(CompressResultImage "false")
+(ShowExactMetricValue "false")
+
+(ImageSampler "Full")
+
+//Order of B-Spline interpolation used in each resolution level:
+(BSplineInterpolationOrder 1)
+
+(FixedImageBSplineInterpolationOrder 1)
+(MovingImageBSplineInterpolationOrder 1)
+
+//Order of B-Spline interpolation used for applying the final deformation:
+(FinalBSplineInterpolationOrder 1)
+
+//Default pixel value for pixels that come from outside the picture:
+(DefaultPixelValue 0)
+
+//(MaximumStepLength 4.0)
+(ResultImagePixelType "short")
 (ResultImageFormat "mhd")
 """

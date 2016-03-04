@@ -1,7 +1,5 @@
 __author__ = 'malbert'
 
-__author__ = 'malbert'
-
 from dependencies import *
 
 config['slidingWindowMeanPath'] = 'slidingWindowMean%s'
@@ -13,19 +11,16 @@ class SlidingWindowMean(descriptors.ChannelData):
     def __init__(self,parent,baseData,nickname,filterSize=2,*args,**kargs):
         print 'creating sliding window mean of %s with filterSize %s' %(baseData.nickname,filterSize)
 
-
         self.baseData = baseData
         self.filterSize = filterSize
-
-        self.hierarchy = config['slidingWindowMeanPath'] %filterSize
-
-        self.dir = self.baseData.dir
-        self.fileNameFormat = self.baseData.fileNameFormat
+        self.hierarchy = nickname
+        self.validTimes = parent.times
 
         super(SlidingWindowMean,self).__init__(parent,nickname,*args,**kargs)
 
-        self.timepointClass = descriptors.H5Array
+        self.timepointClass = h5py.Dataset
 
+        return
 
     def prepareTimepoints(self,times,redo):
 
@@ -33,18 +28,16 @@ class SlidingWindowMean(descriptors.ChannelData):
 
         alreadyDoneTimes, toDoTimes = [],[]
         for itime,time in enumerate(times):
-            tmpFile = h5py.File(self.baseData.getFileName(time))
-            if self.hierarchy in tmpFile.keys():
+            tmpFile = self.parent[time]
+            if self.nickname in tmpFile.keys():
                 if redo:
-                    del tmpFile[self.hierarchy]
+                    del tmpFile[self.nickname]
                     toDoTimes.append(time)
                 else:
                     alreadyDoneTimes.append(time)
-                    outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.hierarchy)
+                    outDict[time] = True
             else:
                 toDoTimes.append(time)
-            #tmpGroup.file.close()
-            tmpFile.close()
 
         print 'already prepared: %s\nto prepare: %s\n' %(alreadyDoneTimes,toDoTimes)
 
@@ -85,33 +78,38 @@ class SlidingWindowMean(descriptors.ChannelData):
                     tmpRes += factor*n.array(self.baseData[new])
                     tmpRes -= factor*n.array(self.baseData[old])
 
-            tmpFile = h5py.File(self.baseData.getFileName(time))
-            tmpFile[self.hierarchy] = tmpRes
-            tmpFile.close()
+            # tmpFile = h5py.File(self.baseData.getFileName(time))
+            # tmpFile[self.hierarchy] = tmpRes
+            # tmpFile.close()
 
-            outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
-                                    hierarchy=self.hierarchy)
+            # pdb.set_trace()
+            filing.toH5_hl(tmpRes.astype(n.float),self.parent[time],hierarchy=self.hierarchy)
+                        # compression='jls',compressionOption=0)
+
+            # outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
+            #                         hierarchy=self.hierarchy)
+            outDict[time] = True
 
         return outDict
 
+
+
 class Signal(descriptors.ChannelData):
 
-    def __init__(self,parent,baseData,nickname,filterSize=5,*args,**kargs):
+    def __init__(self,parent,baseData,nickname,filterSize=5,factor=1000,*args,**kargs):
         print 'creating sliding window mean of %s with filterSize %s' %(baseData.nickname,filterSize)
-
 
         self.baseData = baseData
         self.filterSize = filterSize
-
-        self.hierarchy = config['signalPath'] %filterSize
-
-        self.dir = self.baseData.dir
-        self.fileNameFormat = self.baseData.fileNameFormat
+        self.hierarchy = nickname
+        self.validTimes = parent.times
+        self.factor = factor
 
         super(Signal,self).__init__(parent,nickname,*args,**kargs)
 
-        self.timepointClass = descriptors.H5Array
+        self.timepointClass = h5py.Dataset
 
+        return
 
     def prepareTimepoints(self,times,redo):
 
@@ -119,18 +117,16 @@ class Signal(descriptors.ChannelData):
 
         alreadyDoneTimes, toDoTimes = [],[]
         for itime,time in enumerate(times):
-            tmpFile = h5py.File(self.baseData.getFileName(time))
-            if self.hierarchy in tmpFile.keys():
+            tmpFile = self.parent[time]
+            if self.nickname in tmpFile.keys():
                 if redo:
-                    del tmpFile[self.hierarchy]
+                    del tmpFile[self.nickname]
                     toDoTimes.append(time)
                 else:
                     alreadyDoneTimes.append(time)
-                    outDict[time] = descriptors.H5Array(self.getFileName(time),hierarchy=self.hierarchy)
+                    outDict[time] = True
             else:
                 toDoTimes.append(time)
-            #tmpGroup.file.close()
-            tmpFile.close()
 
         print 'already prepared: %s\nto prepare: %s\n' %(alreadyDoneTimes,toDoTimes)
 
@@ -184,20 +180,72 @@ class Signal(descriptors.ChannelData):
                 #     print 'debug: ',time,old,new
 
             # tmpRes[tmpRes==0] = 1
-            tmpSignal = n.abs(self.baseData[time]-tmpRes.astype(n.float))/tmpRes
+            tmpDiff = self.baseData[time]-tmpRes.astype(n.float)
+            tmpSignal = tmpDiff*(tmpDiff>0).astype(n.uint8)/tmpRes
             tmpSignal[tmpRes==0] = 0
 
-            tmpFile = h5py.File(self.baseData.getFileName(time))
-            tmpFile[self.hierarchy] = tmpSignal
-            tmpFile.close()
+            # tmpFile = h5py.File(self.baseData.getFileName(time))
+            # tmpFile[self.hierarchy] = tmpSignal
+
             # pdb.set_trace()
-            outDict[time] = descriptors.H5Array(self.baseData.getFileName(time),
-                                    hierarchy=self.hierarchy)
+            filing.toH5_hl((tmpSignal*self.factor).astype(n.uint16),self.parent[time],hierarchy=self.hierarchy,
+                           compression='jls',compressionOption=2)
+
+            outDict[time] = True
 
         return outDict
 
+class DistanceMasks(object):
+
+    def __init__(self,signal,mask,nDilations=20):
+        print 'instanciating Hulls'
+        self.nDilations = nDilations
+        self.segmentation = segmentation
+        self.signal = signal
+        self.mask = mask
+        # self.timepointClass = descriptors.H5Pointer
+        self.timepointClass = h5py.Group
+        return
+
+    # def fromFile(self,rootFileName,hierarchy):
+    #     return descriptors.H5Pointer(rootFileName,hierarchy)
+
+    def fromFrame(self,time,frame,tmpFile,tmpHierarchy):
+        tmpGroup = tmpFile.create_group(tmpHierarchy)
+        seg = n.array(frame)
+        print 'distance masks...'
+        tmpFile[tmpHierarchy].create_group('masks')
+        masks = getDistanceMasks(n.array(seg),self.mask.ga()[self.mask.slices],nDilations=self.nDilations)
+        for idil in range(self.nDilations):
+            filing.toH5_hl(masks[idil],tmpFile,hierarchy=os.path.join(tmpHierarchy,'masks/%s' %idil),compression='jls')
+        s = n.array([n.sum(masks[idil]*n.array(self.signal[time]).astype(n.float))/n.sum(masks[idil]) for idil in range(self.nDilations)])
+        filing.toH5_hl(s,tmpFile,hierarchy=os.path.join(tmpHierarchy,'signal'))
+
+        return
 
 
 def mymean(x,y):
     tmp = x.mean()
     for ii in range(len(y)): y[ii]=tmp
+
+
+def getDistanceMasks(microglia,mask,nDilations=10):
+    microglia = sitk.gifa((n.array(microglia)!=0).astype(n.uint16))
+    # nDilations = 2
+    dilations = []
+    tmp = microglia
+    for idil in range(nDilations):
+        print 'dilation %s from %s' %(idil+1,nDilations)
+        tmp = sitk.BinaryDilate(tmp)
+        tmp = sitk.BinaryFillhole(tmp)
+        dilations.append(tmp)
+    for idil in range(len(dilations))[::-1]:
+        # pdb.set_trace()
+        if idil:
+            dilations[idil] = sitk.gafi(dilations[idil]-dilations[idil-1])*mask
+        else:
+            dilations[idil] = sitk.gafi(dilations[idil]-microglia)*mask
+        # dilations[idil] = sitk.gafi(dilations[idil])*mask
+
+    return dilations
+

@@ -7,7 +7,6 @@ from dependencies import *
 class Brain(object):
 
     def __init__(self,fileName,
-                 dimt = 1000,
                  dimc = 2,
                  baseDataDir = '/data/malbert/quantification',
                  subDir = '%s' %timestamp,
@@ -31,7 +30,7 @@ class Brain(object):
             self.origin = origin
 
         self.datashape = None
-        self.dimt = dimt
+        # self.dimt = dimt
         self.dimc = dimc
         self.debug = False
         self.fileName = fileName
