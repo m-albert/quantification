@@ -1,6 +1,7 @@
 __author__ = 'malbert'
 
 from dependencies import *
+from skimage.feature import peak_local_max
 
 config['segmentationPath'] = 'segmentation'
 
@@ -392,7 +393,6 @@ class ActiveContourSegmentation(object):
         bImg = (sImg > 0).astype(n.uint16)
         gI = 1 / (1+lImg**2)
 
-
         mgac = morphsnakes.MorphGAC(gI, smoothing=1, threshold=0.1, balloon=-0.6)
         # mgac = morphsnakes.MorphACWE(gI, smoothing=1, lambda1=1, lambda2=1)
         mgac.levelset = getHullsIm(sImg)
@@ -488,6 +488,227 @@ class ActiveContourSegmentation(object):
         # return descriptors.H5Pointer(rootFile.filename,nickname)
         return
 
+class StructuralSegmentation(object):
+
+    # to use with descriptors.IndependentChannel
+
+    def __init__(self,channel,parent, minSize = 100, propagation = True):
+        print 'branch segmentation'
+        self.channel = channel
+        self.minSize = minSize
+        self.propagation = propagation
+        # self.minSizeMaxSeparation = minSizeMaxSeparation
+        self.timepointClass = h5py.Group
+        self.parent = parent
+        return
+
+    # def fromFile(self,rootFileName,hierarchy):
+    #     # return descriptors.H5Pointer(rootFileName,hierarchy)
+    #     return True
+
+    def fromFrame(self,time,frame,tmpFile,tmpHierarchy):
+
+        print 'extracting objects...'
+
+        # filePointer = rootFile.create_group(tmpString)
+        tmpGroup = tmpFile.create_group(tmpHierarchy)
+
+        # pdb.set_trace()
+        # sImg = sitk.gifa(frame)
+
+        seg = (n.array(frame['labels'])>0).astype(n.uint16)
+        # segLabels,segN = ndimage.label(seg)
+        #
+        # dilseg = ndimage.binary_dilation(seg)
+        # # dseg = sitk.gafi(sitk.SignedDanielssonDistanceMap(sitk.gifa(seg.astype(n.uint16))))
+        # # dseg = (dseg<0)*dseg*(-1)
+        # gI = (dilseg-seg).astype(n.int8)
+        # gI = gI*(-1)+1
+
+        gI = -n.abs(sitk.gafi(sitk.SignedDanielssonDistanceMap(sitk.gifa(seg.astype(n.uint16)))))
+        mgac = morphsnakes.MorphGACInflate(gI, smoothing=2, threshold=0.1, balloon=0.6)
+
+        # if time == self.refTime:
+        # if time == self.channel.parent.times[0]:
+        if time == 0 or not self.propagation:
+            d = sitk.gafi(sitk.DanielssonDistanceMap(sitk.gifa(seg*(-1)+1)))
+            maxima = imaging.findRel(d,(3,3,3),n.max)
+            nz = n.array(n.where(maxima>0))
+            ints = d[tuple(nz)]
+
+            mgac.levelset = circles_levelset(seg.shape, nz.swapaxes(0,1),ints)
+        else:
+            prevBodies = (n.array(self.channel[time-1]['somas'])>0).astype(n.uint16)
+            # prevBodies = ndimage.binary_erosion(prevBodies,iterations=6)
+            mgac.levelset = prevBodies
+
+        # if time == 0 or not self.propagation:
+        #     distanceBase = seg
+        # else:
+        #     distanceBase = (n.array(self.channel[time-1]['somas'])>0).astype(n.uint16)
+        #
+        # d = sitk.gafi(sitk.DanielssonDistanceMap(sitk.gifa(distanceBase*(-1)+1)))
+        # maxima = imaging.findRel(d,(3,3,3),n.max)
+        # nz = n.array(n.where(maxima>0))
+        # ints = d[tuple(nz)]
+        # mgac.levelset = circles_levelset(d.shape, nz.swapaxes(0,1),ints)
+
+            # mgac.levelset = (n.array(self.parent.fileDict[self.refTime][tmpHierarchy]['labels'])>0).astype(n.uint16)
+
+        # Visual evolution.
+        # morphsnakes.evolve(mgac, num_iters=20)
+        # morphsnakes.evolve(mgac, num_iters=20)
+        # morphsnakes.evolve_visualMaxProj(mgac, num_iters=20)
+        morphsnakes.evolve(mgac, num_iters=20)
+        somaContours = mgac.levelset.astype(n.uint16)
+
+        somaMask = ndimage.binary_dilation(somaContours,iterations=4)
+        somas = somaMask*seg
+        somas = somas.astype(n.uint16)
+
+        branches = ((seg-somas)==1).astype(n.uint16)
+
+        labels = ndimage.label(branches)[0]
+        labels = (labels+somas+(labels>0+1)).astype(n.uint16)
+
+        #
+        # bodyLabels,N = ndimage.label(mgac.levelset)
+        #
+        # segLabelBodies = segLabels*mgac.levelset
+        # for iseg in range(segN):
+        #     segBodies = (segLabelBodies==(iseg+1)).astype(n.uint16)
+        #     sizes = imaging.getSizes(segBodies)
+        #     uniqueBody = (mgac.levelset==(n.argmax(sizes)+1)).astype(n.uint16)
+        #
+        # mask = ndimage.binary_dilation(sizeFilter,iterations=4)
+        # branches = seg.astype(n.int8)-mask.astype(n.int8)
+        # branches = branches>0
+        # branch,N = ndimage.label(branches)
+        # soma = mask*seg
+
+        filing.toH5_hl(somas,tmpFile,hierarchy=os.path.join(tmpHierarchy,'somas'),compression='jls')
+        filing.toH5_hl(branches,tmpFile,hierarchy=os.path.join(tmpHierarchy,'branches'),compression='jls')
+        filing.toH5_hl(labels,tmpFile,hierarchy=os.path.join(tmpHierarchy,'labels'),compression='jls')
+
+        # # filePointer['nObjects'] = len(bboxs)
+        # filing.toH5_hl(len(bboxs),tmpFile,hierarchy=os.path.join(tmpHierarchy,'nObjects'))
+        #
+        # tmpBboxs = n.array([[[bboxs[j][i].start,bboxs[j][i].stop] for i in range(3)] for j in range(len(bboxs))])
+        # # filePointer['bboxs'] = n.array([[[bboxs[j][i].start,bboxs[j][i].stop] for i in range(3)] for j in range(len(bboxs))])
+        # filing.toH5_hl(tmpBboxs,tmpFile,hierarchy=os.path.join(tmpHierarchy,'bboxs'))
+        #
+        # # filePointer['minCoordinates'] = minCoordinates
+        # filing.toH5_hl(minCoordinates,tmpFile,hierarchy=os.path.join(tmpHierarchy,'minCoordinates'))
+        #
+        # # filePointer['sizes'] = osizes
+        # filing.toH5_hl(osizes,tmpFile,hierarchy=os.path.join(tmpHierarchy,'sizes'))
+        #
+        # # filePointer['sizes'] = osizes
+        # filing.toH5_hl(surfaces,tmpFile,hierarchy=os.path.join(tmpHierarchy,'surfaces'))
+        #
+        # # filePointer['centers'] = centers
+        # filing.toH5_hl(centers,tmpFile,hierarchy=os.path.join(tmpHierarchy,'centers'))
+        #
+        # coordinatesGroup = tmpFile[tmpHierarchy].create_group('coordinates')
+        # for i in range(len(coordinatess)):
+        #     # coordinatesGroup[str(i)] = coordinatess[i]
+        #     filing.toH5_hl(coordinatess[i],tmpFile,hierarchy=os.path.join(tmpHierarchy,os.path.join('coordinates',str(i))))
+
+        # return descriptors.H5Pointer(rootFile.filename,nickname)
+        return
+
+class BranchSegmentation2(object):
+
+    # to use with descriptors.IndependentChannel
+
+    def __init__(self,channel,parent, minSize = 100, refTime = 0):
+        print 'branch segmentation'
+        self.channel = channel
+        self.minSize = minSize
+        self.refTime = refTime
+        # self.minSizeMaxSeparation = minSizeMaxSeparation
+        self.timepointClass = h5py.Group
+        self.parent = parent
+        return
+
+    def fromFrame(self,time,frame,tmpFile,tmpHierarchy):
+
+        print 'extracting objects...'
+
+        tmpGroup = tmpFile.create_group(tmpHierarchy)
+
+        seg = (n.array(frame['labels'])>0).astype(n.uint16)
+        # segLabels,segN = ndimage.label(seg)
+
+        # dilseg = ndimage.binary_dilation(seg)
+        # gI = (dilseg-seg).astype(n.int8)
+        # gI = gI*(-1)+1
+
+        gI = -n.abs(sitk.gafi(sitk.SignedDanielssonDistanceMap(sitk.gifa(seg.astype(n.uint16)))))
+        mgac = morphsnakes.MorphGACInflate(gI, smoothing=2, threshold=0.1, balloon=0.6)
+
+        if time == self.refTime:
+            d = sitk.gafi(sitk.DanielssonDistanceMap(sitk.gifa(seg*(-1)+1)))
+            maxima = peak_local_max(d)
+            # maxima = imaging.findRel(d,(3,3,3),n.max)
+            nz = n.array(n.where(maxima>0))
+            ints = d[tuple(nz)]
+
+            mgac.levelset = circles_levelset(seg.shape, nz.swapaxes(0,1),ints)
+        else:
+            prevBodies = (n.array(self.channel[self.refTime]['labels'])>0).astype(n.uint16)
+            prevBodies = ndimage.binary_erosion(prevBodies)
+            mgac.levelset = prevBodies
+
+        morphsnakes.evolve(mgac, num_iters=20)
+        # morphsnakes.evolve(mgac, num_iters=20)
+        labels = mgac.levelset.astype(n.uint16)
+
+        #
+        # bodyLabels,N = ndimage.label(mgac.levelset)
+        #
+        # segLabelBodies = segLabels*mgac.levelset
+        # for iseg in range(segN):
+        #     segBodies = (segLabelBodies==(iseg+1)).astype(n.uint16)
+        #     sizes = imaging.getSizes(segBodies)
+        #     uniqueBody = (mgac.levelset==(n.argmax(sizes)+1)).astype(n.uint16)
+        #
+        # mask = ndimage.binary_dilation(sizeFilter,iterations=4)
+        # branches = seg.astype(n.int8)-mask.astype(n.int8)
+        # branches = branches>0
+        # branch,N = ndimage.label(branches)
+        # soma = mask*seg
+
+        filing.toH5_hl(labels,tmpFile,hierarchy=os.path.join(tmpHierarchy,'labels'),compression='jls')
+
+        # # filePointer['nObjects'] = len(bboxs)
+        # filing.toH5_hl(len(bboxs),tmpFile,hierarchy=os.path.join(tmpHierarchy,'nObjects'))
+        #
+        # tmpBboxs = n.array([[[bboxs[j][i].start,bboxs[j][i].stop] for i in range(3)] for j in range(len(bboxs))])
+        # # filePointer['bboxs'] = n.array([[[bboxs[j][i].start,bboxs[j][i].stop] for i in range(3)] for j in range(len(bboxs))])
+        # filing.toH5_hl(tmpBboxs,tmpFile,hierarchy=os.path.join(tmpHierarchy,'bboxs'))
+        #
+        # # filePointer['minCoordinates'] = minCoordinates
+        # filing.toH5_hl(minCoordinates,tmpFile,hierarchy=os.path.join(tmpHierarchy,'minCoordinates'))
+        #
+        # # filePointer['sizes'] = osizes
+        # filing.toH5_hl(osizes,tmpFile,hierarchy=os.path.join(tmpHierarchy,'sizes'))
+        #
+        # # filePointer['sizes'] = osizes
+        # filing.toH5_hl(surfaces,tmpFile,hierarchy=os.path.join(tmpHierarchy,'surfaces'))
+        #
+        # # filePointer['centers'] = centers
+        # filing.toH5_hl(centers,tmpFile,hierarchy=os.path.join(tmpHierarchy,'centers'))
+        #
+        # coordinatesGroup = tmpFile[tmpHierarchy].create_group('coordinates')
+        # for i in range(len(coordinatess)):
+        #     # coordinatesGroup[str(i)] = coordinatess[i]
+        #     filing.toH5_hl(coordinatess[i],tmpFile,hierarchy=os.path.join(tmpHierarchy,os.path.join('coordinates',str(i))))
+
+        # return descriptors.H5Pointer(rootFile.filename,nickname)
+        return
+
+
 def getHullsIm(im):
     labels,N = ndimage.label(im)
     sizes = imaging.getSizes(labels)
@@ -511,3 +732,35 @@ def getHullIm(im):
     hullim = pointsinhull.reshape(im.shape)
 
     return hullim
+
+def circles_levelset(shape, centers, sqradiuss, scalerow=1.0):
+    """Build a binary function with a circle as the 0.5-levelset."""
+    us = []
+    for i in range(len(centers)):
+
+        grid = n.mgrid[map(slice, shape)].T - centers[i]
+        phi = sqradiuss[i] - n.sqrt(n.sum((grid.T)**2, 0))
+        u = n.float_(phi > 0)
+        us.append(u)
+    res = n.sum(us,0)
+    res = res/(res+(res==0))
+    return res
+
+
+def clusterSomas(somas,maxDist,spacing):
+    # soma mask
+    spacing = n.array(spacing)
+    somaLabels,somaN = ndimage.label(somas>0)
+    centers = ndimage.center_of_mass(somas,somaLabels,range(1,N+1))
+    clusters = [[0]]
+    for icenter,center in enumerate(centers):
+        if not icenter: continue
+        for icluster,cluster in enumerate(clusters):
+            found = False
+            for imember,member in enumerate(cluster):
+                if n.linalg.norm(centers[member] - center)*spacing <= maxDist:
+                    clusters[icluster].append(icenter)
+                    found = True
+                    break
+            if found: break
+    return clusters

@@ -384,6 +384,116 @@ class MorphGAC(object):
         for i in xrange(iterations):
             self.step()
 
+class MorphGACInflate(object):
+    """Morphological GAC based on the Geodesic Active Contours."""
+
+    def __init__(self, data, smoothing=1, threshold=0, balloon=0):
+        """Create a Morphological GAC solver.
+
+        Parameters
+        ----------
+        data : array-like
+            The stopping criterion g(I). See functions gborders and glines.
+        smoothing : scalar
+            The number of repetitions of the smoothing step in each
+            iteration. This is the parameter µ.
+        threshold : scalar
+            The threshold that determines which areas are affected
+            by the morphological balloon. This is the parameter θ.
+        balloon : scalar
+            The strength of the morphological balloon. This is the parameter ν.
+        """
+        self._u = None
+        self._v = balloon
+        self._theta = threshold
+        self.smoothing = smoothing
+
+        self.set_data(data)
+
+    def set_levelset(self, u):
+        self._u = np.double(u)
+        self._u[u>0] = 1
+        self._u[u<=0] = 0
+
+    def set_balloon(self, v):
+        self._v = v
+        self._update_mask()
+
+    def set_threshold(self, theta):
+        self._theta = theta
+        self._update_mask()
+
+    def set_data(self, data):
+        self._data = data
+        self._ddata = np.gradient(data)
+        self._update_mask()
+        # The structure element for binary dilation and erosion.
+        self.structure = np.ones((3,)*np.ndim(data))
+
+    def _update_mask(self):
+        """Pre-compute masks for speed."""
+        self._threshold_mask = self._data > self._theta
+        self._threshold_mask_v = self._data > self._theta/np.abs(self._v)
+
+    levelset = property(lambda self: self._u,
+                        set_levelset,
+                        doc="The level set embedding function (u).")
+    data = property(lambda self: self._data,
+                        set_data,
+                        doc="The data that controls the snake evolution (the image or g(I)).")
+    balloon = property(lambda self: self._v,
+                        set_balloon,
+                        doc="The morphological balloon parameter (ν (nu, not v)).")
+    threshold = property(lambda self: self._theta,
+                        set_threshold,
+                        doc="The threshold value (θ).")
+
+    def step(self):
+        """Perform a single step of the morphological snake evolution."""
+        # Assign attributes to local variables for convenience.
+        u = self._u
+        gI = self._data
+        dgI = self._ddata
+        theta = self._theta
+        v = self._v
+
+        if u is None:
+            raise ValueError, "the levelset is not set (use set_levelset)"
+
+        res = np.copy(u)
+
+        # Balloon.
+        # if v > 0:
+        #     aux = binary_dilation(u, self.structure)
+        # elif v < 0:
+        #     aux = binary_erosion(u, self.structure)
+        # if v!= 0:
+        #     res[self._threshold_mask_v] = aux[self._threshold_mask_v]
+
+        # Image attachment.
+        aux = np.zeros_like(res)
+        dres = np.gradient(res)
+        dres = [-i for i in dres]
+        # pdb.set_trace()
+        for el1, el2 in zip(dgI, dres):
+            aux += el1*el2
+        res[aux > 0] = 1
+        res[aux < 0] = 0
+
+        # pdb.set_trace()
+        # Smoothing.
+        for i in xrange(self.smoothing):
+            res = curvop(res)
+        # import sys
+        print np.sum(np.abs(u.astype(np.int8)-res.astype(np.int8)))
+        # sys.stdout.flush()
+        self._u = res
+
+    def run(self, iterations):
+        """Run several iterations of the morphological snakes method."""
+        for i in xrange(iterations):
+            self.step()
+
 def getSitkGradient(im):
 
     gradient = sitk.Gradient(im)
@@ -646,6 +756,58 @@ def evolve_visual3d(msnake, levelset=None, num_iters=20):
     #
     # anim()
     # mlab.show()
+
+    # Return the last levelset.
+    return msnake.levelset
+
+def evolve_visualMaxProj(msnake, levelset=None, num_iters=50, background=None):
+    """
+    Visual evolution of a morphological snake.
+
+    Parameters
+    ----------
+    msnake : MorphGAC or MorphACWE instance
+        The morphological snake solver.
+    levelset : array-like, optional
+        If given, the levelset of the solver is initialized to this. If not
+        given, the evolution will use the levelset already set in msnake.
+    num_iters : int, optional
+        The number of iterations.
+    background : array-like, optional
+        If given, background will be shown behind the contours instead of
+        msnake.data.
+    """
+    from matplotlib import pyplot as ppl
+
+    if levelset is not None:
+        msnake.levelset = levelset
+
+    # Prepare the visual environment.
+    fig = ppl.gcf()
+    fig.clf()
+    ax1 = fig.add_subplot(1,2,1)
+    if background is None:
+        ax1.imshow(msnake.data.max(0), cmap=ppl.cm.gray)
+    else:
+        ax1.imshow(background.max(0), cmap=ppl.cm.gray)
+    ax1.contour(msnake.levelset.max(0), [0.5], colors='r')
+
+    ax2 = fig.add_subplot(1,2,2)
+    ax_u = ax2.imshow(msnake.levelset.max(0))
+    ppl.pause(0.001)
+
+    # debug = n.zeros((num_iters,)+ msnake.levelset.shape[1:],dtype=n.uint16)
+    # Iterate.
+    for i in xrange(num_iters):
+        # Evolve.
+        msnake.step()
+
+        # Update figure.
+        del ax1.collections[0]
+        ax1.contour(msnake.levelset.max(0), [0.5], colors='r')
+        ax_u.set_data(msnake.levelset.max(0))
+        fig.canvas.draw()
+        #ppl.pause(0.001)
 
     # Return the last levelset.
     return msnake.levelset

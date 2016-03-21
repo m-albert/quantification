@@ -56,6 +56,7 @@ import SimpleITK as sitk
 sitk.gifa = sitk.GetImageFromArray
 sitk.gafi = sitk.GetArrayFromImage
 
+# import h5pyswmr as h5py #malbert
 import h5py
 import numpy as n
 from scipy import ndimage,spatial,cluster,interpolate
@@ -75,6 +76,8 @@ import registration
 import segmentation
 import tracking
 import activity
+
+# import measurement
 
 
 ar = n.array

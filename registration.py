@@ -134,7 +134,8 @@ class RegistrationParameters(descriptors.ChannelData):
                     if not (self.parent.registrationSliceStringSitk is None):
                         exec('tmpImage = tmpImage[%s]' %self.parent.registrationSliceStringSitk)
 
-                    closestTime = alreadyDoneTimes[n.argmin(n.abs(n.array(alreadyDoneTimes)-time))]
+                    # closestTime = alreadyDoneTimes[n.argmin(n.abs(n.array(alreadyDoneTimes)-time))]
+                    closestTime = time-1
                     # tmpObject = outDict[closestTime]
                     tmpObject = n.array(self.parent[closestTime][self.hierarchy])
                     # tmpInitialParams = [[1.,0,0,0,1,0,0,0,1,0,0,0],tmpObject.__get__(tmpObject,tmpObject)]
@@ -385,6 +386,7 @@ class Transformation(descriptors.ChannelData):
 
         if not len(toDoTimes): return outDict
 
+        if self.paramsData is None: self.paramsData = n.array([1,0,0,0,1,0,0,0,1,0,0,0])
         if type(self.paramsData) in [list,n.ndarray]:
             refIm = None
         elif type(self.paramsData.reference) == int:

@@ -322,7 +322,7 @@ class ChannelData(object):
         self.times = self.parent.times
 
         if not self.__dict__.has_key('validTimes'):
-            if self.__dict__.has_key('baseData'):
+            if self.__dict__.has_key('baseData') and not(self.baseData is None):
                 self.validTimes = self.baseData.validTimes
             else:
                 self.validTimes = self.parent.times
@@ -343,7 +343,10 @@ class ChannelData(object):
         timepointsToPrepare = n.array(list(set(self.validTimes).intersection(set(self.parent.times))))
         timepointsToPrepare = list(timepointsToPrepare[n.argsort(timepointsToPrepare)])
 
-        self.timesDict = self.prepareTimepoints(timepointsToPrepare,self.redo)
+        self.timesDict = {}
+        for itime,time in enumerate(timepointsToPrepare):
+            self.timesDict[time] = self.prepareTimepoints([time],self.redo)[time]
+        # self.timesDict = self.prepareTimepoints(timepointsToPrepare,self.redo)
 
 
     def __get__(self,instance,owner):
@@ -354,6 +357,7 @@ class ChannelData(object):
 
     def __getitem__(self,item):
         item = int(item)
+        # pdb.set_trace()
         if not self.timesDict.has_key(item):
             print '%s: preparing time %s' %(self.nickname,item)
             self.timesDict[item] = self.prepareTimepoints([item],self.redo)[item]
@@ -413,7 +417,7 @@ class ChannelData(object):
     #     except:
     #         print 'could not close'
 
-class IndependentChannel(ChannelData):
+class IndependentChannelOld(ChannelData):
 
     def __init__(self,parent,baseData,nickname,processClass,redo=False,*args,**kargs):
 
@@ -479,7 +483,181 @@ class IndependentChannel(ChannelData):
                 #     tmpGroup = tmpFile.create_group(tmpString)
 
                 # self.processObject.fromFrame(self.baseData[time],tmpGroup)
-                self.processObject.fromFrame(time,self.baseData[time],tmpFile,tmpString)
+                if not (self.baseData is None):
+                    self.processObject.fromFrame(time,self.baseData[time],tmpFile,tmpString)
+                else: self.processObject.fromFrame(time,None,tmpFile,tmpString)
+
+                tmpFile.move(tmpString,self.hierarchy)
+
+                # outDict[time] = descriptors.H5Pointer(rootFile.filename,nickname)
+                # outDict[time] = self.processObject.timepointClass(self.baseData.getFileName(time),self.nickname)
+                outDict[time] = True
+
+                # tmpGroup = None
+                # tmpFile.close()
+
+        return outDict
+
+class IndependentChannel(ChannelData):
+
+    def __init__(self,parent,baseData,nickname,processClass,redo=False,*args,**kargs):
+
+        # no dir setting here?
+
+        self.baseData = baseData
+        # self.dir = self.baseData.dir
+
+        self.processObject = processClass(parent,*args,**kargs)
+        # if hasattr(self.processObject(),'groupOrImage'):
+        #     self.groupOrImage = True
+        # else: self.groupOrImage = False
+
+        # self.parent = parent
+        self.nickname = nickname
+        self.hierarchy = nickname
+        self.redo = redo
+
+        super(IndependentChannel,self).__init__(parent,nickname,redo=self.redo)
+        return
+
+    def prepareTimepoints(self,times,redo):
+
+        outDict = dict()
+
+        alreadyDoneTimes, toDoTimes = [],[]
+        for itime,time in enumerate(times):
+            # tmpFile = h5py.File(self.baseData.getFileName(time))
+            tmpFile = self.parent[time]
+            if self.nickname in tmpFile.keys():
+                if redo:
+                    del tmpFile[self.nickname]
+                    toDoTimes.append(time)
+                else:
+                    alreadyDoneTimes.append(time)
+                    # outDict[time] = self.processObject.fromFile(self.getFileName(time),hierarchy=self.nickname)
+                    outDict[time] = True
+            else:
+                toDoTimes.append(time)
+            # tmpFile.close()
+
+        print 'already prepared: %s\nto prepare: %s\n' %(alreadyDoneTimes,toDoTimes)
+
+        if not len(toDoTimes): return outDict
+
+        for itime,time in enumerate(toDoTimes):
+
+            with DelayedKeyboardInterrupt():
+
+                # tmpFile = h5py.File(self.baseData.getFileName(time))
+                tmpFile = self.parent[time]
+                if self.nickname in tmpFile.keys():
+                    if redo:
+                        print 'preparing %s: redoing time %s' %(self.nickname,time)
+                        del tmpFile[self.nickname]
+                    else:
+                        print 'preparing %s: found prepared time %s' %(self.nickname,time)
+                        outDict[time] = True
+                        continue
+
+                tmpPrefix = self.nickname+'_'
+
+                tmpString = tmpPrefix + str(n.random.randint(0,1000000000000000,1)[0])
+                while tmpString in tmpFile.keys():
+                    tmpString = tmpPrefix + str(n.random.randint(0,1000000000000000,1)[0])
+
+                # if self.groupOrImage:
+                #     tmpGroup = tmpFile.create_group(tmpString)
+
+                # self.processObject.fromFrame(self.baseData[time],tmpGroup)
+                if not (self.baseData is None):
+                    self.processObject.fromFrame(time,self.baseData[time],tmpFile,tmpString)
+                else: self.processObject.fromFrame(time,None,tmpFile,tmpString)
+
+                tmpFile.move(tmpString,self.hierarchy)
+
+                # outDict[time] = descriptors.H5Pointer(rootFile.filename,nickname)
+                # outDict[time] = self.processObject.timepointClass(self.baseData.getFileName(time),self.nickname)
+                outDict[time] = True
+
+                # tmpGroup = None
+                # tmpFile.close()
+
+        return outDict
+
+class DependentChannel(ChannelData):
+
+    def __init__(self,parent,baseData,nickname,processClass,redo=False,*args,**kargs):
+
+        # no dir setting here?
+
+        self.baseData = baseData
+        # self.dir = self.baseData.dir
+
+        self.processObject = processClass(self,parent,*args,**kargs)
+        # if hasattr(self.processObject(),'groupOrImage'):
+        #     self.groupOrImage = True
+        # else: self.groupOrImage = False
+
+        # self.parent = parent
+        self.nickname = nickname
+        self.hierarchy = nickname
+        self.redo = redo
+
+        super(DependentChannel,self).__init__(parent,nickname,redo=self.redo)
+        return
+
+    def prepareTimepoints(self,times,redo):
+
+        outDict = dict()
+
+        alreadyDoneTimes, toDoTimes = [],[]
+        for itime,time in enumerate(times):
+            # tmpFile = h5py.File(self.baseData.getFileName(time))
+            tmpFile = self.parent[time]
+            if self.nickname in tmpFile.keys():
+                if redo:
+                    del tmpFile[self.nickname]
+                    toDoTimes.append(time)
+                else:
+                    alreadyDoneTimes.append(time)
+                    # outDict[time] = self.processObject.fromFile(self.getFileName(time),hierarchy=self.nickname)
+                    outDict[time] = True
+            else:
+                toDoTimes.append(time)
+            # tmpFile.close()
+
+        print 'already prepared: %s\nto prepare: %s\n' %(alreadyDoneTimes,toDoTimes)
+
+        if not len(toDoTimes): return outDict
+
+        for itime,time in enumerate(toDoTimes):
+
+            with DelayedKeyboardInterrupt():
+
+                # tmpFile = h5py.File(self.baseData.getFileName(time))
+                tmpFile = self.parent[time]
+                if self.nickname in tmpFile.keys():
+                    if redo:
+                        print 'preparing %s: redoing time %s' %(self.nickname,time)
+                        del tmpFile[self.nickname]
+                    else:
+                        print 'preparing %s: found prepared time %s' %(self.nickname,time)
+                        outDict[time] = True
+                        continue
+
+                tmpPrefix = self.nickname+'_'
+
+                tmpString = tmpPrefix + str(n.random.randint(0,1000000000000000,1)[0])
+                while tmpString in tmpFile.keys():
+                    tmpString = tmpPrefix + str(n.random.randint(0,1000000000000000,1)[0])
+
+                # if self.groupOrImage:
+                #     tmpGroup = tmpFile.create_group(tmpString)
+
+                # self.processObject.fromFrame(self.baseData[time],tmpGroup)
+                if not (self.baseData is None):
+                    self.processObject.fromFrame(time,self.baseData[time],tmpFile,tmpString)
+                else: self.processObject.fromFrame(time,None,tmpFile,tmpString)
 
                 tmpFile.move(tmpString,self.hierarchy)
 

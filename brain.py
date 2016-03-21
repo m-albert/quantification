@@ -57,11 +57,13 @@ class Brain(object):
         return
 
     def __getitem__(self,time):
+        # pdb.set_trace()
         if time in self.fileDict.keys():
             return self.fileDict[time]
         else:
             if os.path.exists(os.path.join(self.dataDir,self.fileNameFormat) %time):
                 self.fileDict[time] = h5py.File(os.path.join(self.dataDir,self.fileNameFormat) %time)
+                return self.fileDict[time]
             else:
                 raise(Exception('timepoint %s not initialized yet' %time))
 

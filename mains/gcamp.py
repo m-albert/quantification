@@ -77,7 +77,7 @@ for isample in samples:
                                 compression='jls')
 
     descriptors.IndependentChannel(b,b.seg_ia,'objects',objects.Objects,redo=False)
-    # descriptors.UnstructuredData(b,b.objects,'tracks_%s' %len(b.times),objects.Tracks,redo=False)
+    # descriptors.UnstructuredData(b,b.objects,'tracks_%s' %len(b.times),objects.Tracks,redo=True)
 
     # ims = []
     # for itrack in range(b.__dict__['tracks_%s' %len(times)]['nTracks']):

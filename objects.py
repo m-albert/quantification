@@ -100,7 +100,7 @@ class Objects(object):
                 # length = int(n.hypot(x1-x0, y1-y0, z1-z0))
                 x, y, z = n.linspace(x0, x1, length), n.linspace(y0, y1, length), n.linspace(z0, z1, length)
                 addCoordinates = n.array([x.astype(n.int), y.astype(n.int), z.astype(n.int)]).swapaxes(0,1)
-                pdb.set_trace()
+                # pdb.set_trace()
                 ncoordinates = n.append(ncoordinates,addCoordinates,0)
 
                 # replace old object by new one
@@ -262,7 +262,7 @@ class Tracks(object):
             objs = n.array(tmpFile[tmpHierarchy]['tracks'][string])[:,1]
             res=[]
             shapes,minCoords = [],[]
-            pdb.set_trace()
+            # pdb.set_trace()
             for itime,time in enumerate(times):
                 # pdb.set_trace()
                 # if tmpBbox
@@ -639,6 +639,15 @@ def find_centers(X,k,spacing=[2,1,1]):
     for i in range(k):
         res.append(X[n.where(cd==i)[0]])
     return([n.mean(res[i],0) for i in range(k)],res)
+
+def myCluster(im,k,func):
+    im = im.astype(n.float)
+    nz = n.array(im.nonzero()).swapaxes(0,1).astype(n.float)
+    centers,res = func(nz,k,spacing=[1,1,1.])
+    resim = n.zeros_like(im)
+    for i in range(k):
+        resim[tuple(res[i].swapaxes(0,1).astype(n.uint16))] = i+1
+    return resim
 
 # def bounding_box(X):
 #     xmin, xmax = min(X,key=lambda a:a[0])[0], max(X,key=lambda a:a[0])[0]
